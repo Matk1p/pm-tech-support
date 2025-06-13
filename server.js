@@ -11,6 +11,98 @@ const PORT = process.env.PORT || 3001;
 // Store processed event IDs to prevent duplicates
 const processedEvents = new Set();
 
+// Store conversation context per chat
+const conversationContext = new Map();
+
+// Response cache for common questions
+const responseCache = new Map();
+const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
+
+// Request queue management
+const requestQueue = [];
+const MAX_CONCURRENT_REQUESTS = 3;
+let activeRequests = 0;
+
+// Performance analytics
+const analytics = {
+  totalRequests: 0,
+  cacheHits: 0,
+  averageResponseTime: 0,
+  commonQuestions: new Map(),
+  errorCount: 0
+};
+
+// Common question patterns for caching
+const CACHEABLE_PATTERNS = [
+  /how.*add.*candidate/i,
+  /how.*create.*job/i,
+  /how.*schedule.*interview/i,
+  /where.*find/i,
+  /what.*pm.?next/i,
+  /login.*problem/i,
+  /upload.*error/i
+];
+
+function getCacheKey(message) {
+  const normalized = message.toLowerCase().trim();
+  for (const pattern of CACHEABLE_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return pattern.toString();
+    }
+  }
+  return null;
+}
+
+function getCachedResponse(message) {
+  const cacheKey = getCacheKey(message);
+  if (!cacheKey) return null;
+  
+  const cached = responseCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_EXPIRY) {
+    console.log('📋 Using cached response for pattern:', cacheKey);
+    return cached.response;
+  }
+  return null;
+}
+
+function setCachedResponse(message, response) {
+  const cacheKey = getCacheKey(message);
+  if (cacheKey) {
+    responseCache.set(cacheKey, {
+      response,
+      timestamp: Date.now()
+    });
+    console.log('💾 Cached response for pattern:', cacheKey);
+  }
+}
+
+async function processRequestQueue() {
+  if (activeRequests >= MAX_CONCURRENT_REQUESTS || requestQueue.length === 0) {
+    return;
+  }
+  
+  const { resolve, reject, fn } = requestQueue.shift();
+  activeRequests++;
+  
+  try {
+    const result = await fn();
+    resolve(result);
+  } catch (error) {
+    reject(error);
+  } finally {
+    activeRequests--;
+    // Process next request in queue
+    setTimeout(processRequestQueue, 100);
+  }
+}
+
+function queueRequest(fn) {
+  return new Promise((resolve, reject) => {
+    requestQueue.push({ resolve, reject, fn });
+    processRequestQueue();
+  });
+}
+
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
@@ -93,6 +185,30 @@ app.post('/lark/events', async (req, res) => {
   }
 });
 
+// Extract text from Lark rich content format
+function extractTextFromRichContent(content) {
+  try {
+    if (!Array.isArray(content)) return '';
+    
+    let text = '';
+    content.forEach(paragraph => {
+      if (Array.isArray(paragraph)) {
+        paragraph.forEach(element => {
+          if (element.tag === 'text' && element.text) {
+            text += element.text;
+          }
+        });
+        text += ' '; // Add space between paragraphs
+      }
+    });
+    
+    return text.trim().replace(/@\w+/g, '').trim(); // Remove mentions
+  } catch (error) {
+    console.error('❌ Error extracting rich content:', error);
+    return '';
+  }
+}
+
 // Handle incoming messages
 async function handleMessage(event) {
   try {
@@ -144,21 +260,27 @@ async function handleMessage(event) {
         }
       }
       
+      // Handle different message types
       if (parsedContent && parsedContent.text) {
-        userMessage = parsedContent.text.replace(/@\w+/g, '').trim(); // Remove mentions
+        // Simple text message
+        userMessage = parsedContent.text.replace(/@\w+/g, '').trim();
+      } else if (parsedContent && parsedContent.content) {
+        // Rich text/post message - extract text from structured content
+        userMessage = extractTextFromRichContent(parsedContent.content);
       }
     }
 
     console.log('📝 Extracted user message:', userMessage);
+    console.log('📏 Message length:', userMessage.length);
 
-    if (!userMessage) {
-      console.log('⏭️  Skipping: Empty message');
+    if (!userMessage || userMessage.length < 2) {
+      console.log('⏭️  Skipping: Empty or too short message');
       return; // Don't respond to empty messages
     }
 
     console.log('🤖 Generating AI response...');
-    // Generate AI response
-    const aiResponse = await generateAIResponse(userMessage);
+    // Generate AI response with context
+    const aiResponse = await generateAIResponse(userMessage, chat_id);
     console.log('✅ AI response generated:', aiResponse);
 
     console.log('📤 Sending response to Lark...');
@@ -172,27 +294,49 @@ async function handleMessage(event) {
 }
 
 // Generate AI response using OpenAI
-async function generateAIResponse(userMessage) {
+async function generateAIResponse(userMessage, chatId) {
+  const startTime = Date.now();
+  
   try {
     console.log('🧠 Calling OpenAI with message:', userMessage);
+    
+    // Check cache first for common questions
+    const cachedResponse = getCachedResponse(userMessage);
+    if (cachedResponse) {
+      const responseTime = Date.now() - startTime;
+      trackRequest(userMessage, responseTime, true);
+      return cachedResponse;
+    }
+    
+    // Get or create conversation context
+    if (!conversationContext.has(chatId)) {
+      conversationContext.set(chatId, []);
+    }
+    
+    const context = conversationContext.get(chatId);
+    console.log('📚 Current context length:', context.length);
     
     // Try different models in order of preference
     const models = ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'];
     const selectedModel = process.env.OPENAI_MODEL || models[0];
     console.log('🔧 Using OpenAI model:', selectedModel);
     
-    const completion = await openai.chat.completions.create({
-      model: selectedModel,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a helpful assistant for the PM-Next Recruitment Management System. 
-          Your role is to help users navigate and understand how to use the application effectively.
-          
-          Use this knowledge base about PM-Next:
-          ${PM_NEXT_KNOWLEDGE}
-          
-          ENHANCED RESPONSE GUIDELINES:
+    // Build messages array with context
+    const messages = [
+      {
+        role: 'system',
+        content: `You are a helpful assistant for the PM-Next Recruitment Management System. 
+        Your role is to help users navigate and understand how to use the application effectively.
+        
+        IMPORTANT: 
+        - Always respond to user messages. Never leave a user without a response.
+        - Pay attention to conversation context - don't ask for details the user already provided.
+        - If user says "still not working" or similar, escalate to live support.
+        
+        Use this knowledge base about PM-Next:
+        ${PM_NEXT_KNOWLEDGE}
+        
+        ENHANCED RESPONSE GUIDELINES:
           
           1. **Initial Response**: Provide clear, step-by-step instructions for navigation and usage
           
@@ -249,12 +393,7 @@ async function generateAIResponse(userMessage) {
           **Escalation Response Template:**
           "I understand this issue needs more specialized attention. Let me connect you with our live support team who can provide immediate assistance:
           
-          🔗 **Join our PM-Next Support Chat**: [PM-Next Live Support Group](https://applink.larksuite.com/client/chat/chatter/add_by_link?link_token=3ddsabad-9efa-4856-ad86-a3974dk05ek2)
-          
-          Or contact our support team directly:
-          📧 **Email**: support@pm-next.com
-          📞 **Phone**: +1 (555) 123-4567
-          ⏰ **Hours**: Monday-Friday, 9 AM - 6 PM EST
+          🔗 **Join our PM-Next Support Chat**: https://applink.larksuite.com/client/chat/chatter/add_by_link?link_token=3ddsabad-9efa-4856-ad86-a3974dk05ek2
           
           Please provide them with:
           - A description of what you were trying to do
@@ -272,21 +411,59 @@ async function generateAIResponse(userMessage) {
           - Use bullet points or numbered steps when appropriate
           - Always be friendly and professional
           - If asked about features not in the knowledge base, politely explain limitations and offer general guidance`
-        },
-        {
-          role: 'user',
-          content: userMessage
-        }
-      ],
-      max_tokens: 500,
-      temperature: 0.7
+      }
+    ];
+    
+    // Add conversation context (keep last 6 messages for context)
+    const recentContext = context.slice(-6);
+    messages.push(...recentContext);
+    
+    // Add current user message
+    messages.push({
+      role: 'user',
+      content: userMessage
+    });
+    
+    const completion = await openai.chat.completions.create({
+      model: selectedModel,
+      messages: messages,
+      max_tokens: 800,
+      temperature: 0.7,
+      stream: false // Set to true for streaming, but Lark doesn't support partial messages well
     });
 
+    const response = completion.choices[0].message.content;
+    
+    // Cache the response for common questions
+    setCachedResponse(userMessage, response);
+    
+    // Update conversation context
+    context.push({ role: 'user', content: userMessage });
+    context.push({ role: 'assistant', content: response });
+    
+    // Keep context manageable (last 20 messages)
+    if (context.length > 20) {
+      context.splice(0, context.length - 20);
+    }
+    
+    const responseTime = Date.now() - startTime;
+    trackRequest(userMessage, responseTime, false);
+    
     console.log('🎯 OpenAI response received successfully');
-    return completion.choices[0].message.content;
+    return response;
   } catch (error) {
+    analytics.errorCount++;
     console.error('❌ Error generating AI response:', error);
-    return 'Sorry, I encountered an error processing your request. Please try again or contact support if the issue persists.';
+    console.error('❌ Error details:', error.message);
+    
+    // Provide more specific error responses
+    if (error.message.includes('timeout')) {
+      return 'I apologize for the delay. The system is taking longer than usual to respond. Please try asking your question again, or contact our support team if this continues.';
+    } else if (error.message.includes('rate limit')) {
+      return 'I\'m currently experiencing high demand. Please wait a moment and try again.';
+    } else {
+      return 'I encountered a technical issue while processing your request. Please try rephrasing your question or our support team for immediate assistance.';
+    }
   }
 }
 
@@ -387,6 +564,31 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Analytics endpoint
+app.get('/analytics', (req, res) => {
+  const topQuestions = Array.from(analytics.commonQuestions.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([question, count]) => ({ question, count }));
+    
+  res.json({
+    totalRequests: analytics.totalRequests,
+    cacheHitRate: analytics.totalRequests > 0 ? 
+      (analytics.cacheHits / analytics.totalRequests * 100).toFixed(1) + '%' : '0%',
+    averageResponseTime: analytics.averageResponseTime.toFixed(0) + 'ms',
+    errorCount: analytics.errorCount,
+    errorRate: analytics.totalRequests > 0 ? 
+      (analytics.errorCount / analytics.totalRequests * 100).toFixed(1) + '%' : '0%',
+    activeRequests: activeRequests,
+    queueLength: requestQueue.length,
+    cacheSize: responseCache.size,
+    conversationsActive: conversationContext.size,
+    topQuestions: topQuestions,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
@@ -397,4 +599,20 @@ app.listen(PORT, () => {
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down PM-Next Lark Bot server...');
   process.exit(0);
-}); 
+});
+
+function trackRequest(message, responseTime, fromCache = false) {
+  analytics.totalRequests++;
+  if (fromCache) analytics.cacheHits++;
+  
+  // Update average response time
+  analytics.averageResponseTime = 
+    (analytics.averageResponseTime * (analytics.totalRequests - 1) + responseTime) / analytics.totalRequests;
+  
+  // Track common questions
+  const questionKey = message.toLowerCase().substring(0, 50);
+  analytics.commonQuestions.set(questionKey, 
+    (analytics.commonQuestions.get(questionKey) || 0) + 1);
+  
+  console.log(`📈 Analytics: ${analytics.totalRequests} requests, ${analytics.cacheHits} cache hits (${(analytics.cacheHits/analytics.totalRequests*100).toFixed(1)}%), avg ${analytics.averageResponseTime.toFixed(0)}ms`);
+} 
