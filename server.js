@@ -43,8 +43,10 @@ app.post('/lark/events', async (req, res) => {
 
     // Handle URL verification (legacy format)
     if (type === 'url_verification') {
-      console.log('🔧 URL verification request');
-      return res.json({ challenge });
+      console.log('🔗 URL verification request');
+      return res.status(200).json({ 
+        challenge: challenge 
+      });
     }
 
     // Handle new format events
