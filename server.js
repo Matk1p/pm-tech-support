@@ -4,12 +4,183 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Client } = require('@larksuiteoapi/node-sdk');
 const OpenAI = require('openai');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Store processed event IDs to prevent duplicates
 const processedEvents = new Set();
+
+// Store conversation context per chat
+const conversationContext = new Map();
+
+// Response cache for common questions
+const responseCache = new Map();
+const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
+
+// Request queue management
+const requestQueue = [];
+const MAX_CONCURRENT_REQUESTS = 3;
+let activeRequests = 0;
+
+// Performance analytics
+const analytics = {
+  totalRequests: 0,
+  cacheHits: 0,
+  averageResponseTime: 0,
+  commonQuestions: new Map(),
+  errorCount: 0
+};
+
+// Support ticket system
+const ticketCollectionState = new Map(); // Track users in ticket creation flow
+
+// Issue categories for classification
+const ISSUE_CATEGORIES = {
+  'candidate': 'candidate_management',
+  'resume': 'candidate_management',
+  'job': 'job_management',
+  'position': 'job_management', 
+  'client': 'client_management',
+  'company': 'client_management',
+  'pipeline': 'pipeline_management',
+  'deal': 'pipeline_management',
+  'login': 'authentication',
+  'password': 'authentication',
+  'access': 'authentication',
+  'upload': 'file_upload',
+  'file': 'file_upload',
+  'slow': 'system_performance',
+  'performance': 'system_performance',
+  'loading': 'system_performance',
+  'add': 'general',
+  'create': 'general',
+  'save': 'general',
+  'other': 'general'
+};
+
+// FAQ responses by category
+const FAQ_RESPONSES = {
+  candidate_management: `**Candidate Management FAQs:**
+
+• **Add Candidate**: Dashboard → Candidates → Add New → fill form → Save
+• **Upload Resume**: Drag & drop or click upload (AI parsing enabled)
+• **Link to Job**: Candidate profile → Applications tab → Add to job
+• **Update Status**: Use status dropdown in candidate profile
+
+**Common Issues:**
+• Resume not parsing? Check file format (PDF/DOC/DOCX) and size (<10MB)
+• Candidate not saving? Ensure required fields are filled
+• Can't find candidate? Use search bar or check filters`,
+
+  job_management: `**Job Management FAQs:**
+
+• **Create Job**: Dashboard → Jobs → Create Job → fill details → Save
+• **Edit Job**: Click job title → update fields → Save
+• **Add Candidates**: Job profile → Candidates section → Add Candidate
+• **Set Status**: Use status dropdown (Active/Closed/On Hold)
+
+**Common Issues:**
+• Job not saving? Check required fields are completed
+• Can't find job? Use search or check job status filters
+• Candidates not linking? Ensure both candidate and job exist`,
+
+  authentication: `**Login & Access FAQs:**
+
+• **Login Issues**: Clear browser cache → try different browser → contact admin
+• **Password Reset**: Use "Forgot Password" link or contact admin
+• **Access Denied**: Check with admin about user permissions
+• **Session Expired**: Log out completely and log back in
+
+**Common Issues:**
+• Browser compatibility: Use Chrome, Firefox, Safari, or Edge
+• Clear cookies and cache if login loops
+• Check internet connection stability`,
+
+  general: `**General PM-Next FAQs:**
+
+• **Navigation**: Use Dashboard menu → select module
+• **Search**: Global search bar finds candidates, jobs, clients
+• **Help**: Look for ? icons throughout the system
+• **Performance**: Close unused tabs, clear cache
+
+**Common Issues:**
+• Page loading slowly? Check internet speed and close other tabs
+• Feature not working? Try refreshing the page
+• Data not syncing? Check internet connection`
+};
+
+// Common question patterns for caching
+const CACHEABLE_PATTERNS = [
+  /how.*add.*candidate/i,
+  /how.*create.*job/i,
+  /how.*schedule.*interview/i,
+  /where.*find/i,
+  /what.*pm.?next/i,
+  /login.*problem/i,
+  /upload.*error/i
+];
+
+function getCacheKey(message) {
+  const normalized = message.toLowerCase().trim();
+  for (const pattern of CACHEABLE_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return pattern.toString();
+    }
+  }
+  return null;
+}
+
+function getCachedResponse(message) {
+  const cacheKey = getCacheKey(message);
+  if (!cacheKey) return null;
+  
+  const cached = responseCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_EXPIRY) {
+    console.log('📋 Using cached response for pattern:', cacheKey);
+    return cached.response;
+  }
+  return null;
+}
+
+function setCachedResponse(message, response) {
+  const cacheKey = getCacheKey(message);
+  if (cacheKey) {
+    responseCache.set(cacheKey, {
+      response,
+      timestamp: Date.now()
+    });
+    console.log('💾 Cached response for pattern:', cacheKey);
+  }
+}
+
+async function processRequestQueue() {
+  if (activeRequests >= MAX_CONCURRENT_REQUESTS || requestQueue.length === 0) {
+    return;
+  }
+  
+  const { resolve, reject, fn } = requestQueue.shift();
+  activeRequests++;
+  
+  try {
+    const result = await fn();
+    resolve(result);
+  } catch (error) {
+    reject(error);
+  } finally {
+    activeRequests--;
+    // Process next request in queue
+    setTimeout(processRequestQueue, 100);
+  }
+}
+
+function queueRequest(fn) {
+  return new Promise((resolve, reject) => {
+    requestQueue.push({ resolve, reject, fn });
+    processRequestQueue();
+  });
+}
 
 // Middleware
 app.use(cors());
@@ -34,6 +205,17 @@ const openai = new OpenAI({
 const fs = require('fs');
 const path = require('path');
 const PM_NEXT_KNOWLEDGE = fs.readFileSync(path.join(__dirname, 'knowledge-base.md'), 'utf8');
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY,
+  {
+    db: {
+      schema: 'support'
+    }
+  }
+);
 
 // Handle Lark events
 app.post('/lark/events', async (req, res) => {
@@ -93,6 +275,30 @@ app.post('/lark/events', async (req, res) => {
   }
 });
 
+// Extract text from Lark rich content format
+function extractTextFromRichContent(content) {
+  try {
+    if (!Array.isArray(content)) return '';
+    
+    let text = '';
+    content.forEach(paragraph => {
+      if (Array.isArray(paragraph)) {
+        paragraph.forEach(element => {
+          if (element.tag === 'text' && element.text) {
+            text += element.text;
+          }
+        });
+        text += ' '; // Add space between paragraphs
+      }
+    });
+    
+    return text.trim().replace(/@\w+/g, '').trim(); // Remove mentions
+  } catch (error) {
+    console.error('❌ Error extracting rich content:', error);
+    return '';
+  }
+}
+
 // Handle incoming messages
 async function handleMessage(event) {
   try {
@@ -109,6 +315,9 @@ async function handleMessage(event) {
     console.log('  - Chat type:', event.message.chat_type);
     console.log('  - Content:', content);
     console.log('  - Mentions:', mentions);
+    
+    // Log chat ID for support group identification
+    console.log('🆔 CHAT ID FOR REFERENCE:', chat_id);
 
     // Check if the message is from the bot itself
     if (sender_type === 'app' || (sender_id && sender_id.id === process.env.LARK_APP_ID)) {
@@ -144,21 +353,34 @@ async function handleMessage(event) {
         }
       }
       
+      // Handle different message types
       if (parsedContent && parsedContent.text) {
-        userMessage = parsedContent.text.replace(/@\w+/g, '').trim(); // Remove mentions
+        // Simple text message
+        userMessage = parsedContent.text.replace(/@\w+/g, '').trim();
+      } else if (parsedContent && parsedContent.content) {
+        // Rich text/post message - extract text from structured content
+        userMessage = extractTextFromRichContent(parsedContent.content);
       }
     }
 
     console.log('📝 Extracted user message:', userMessage);
+    console.log('📏 Message length:', userMessage.length);
 
-    if (!userMessage) {
-      console.log('⏭️  Skipping: Empty message');
+    // Check if user is in ticket creation flow
+    const isInTicketFlow = ticketCollectionState.has(chat_id);
+    
+    if (!userMessage || (userMessage.length < 2 && !isInTicketFlow)) {
+      console.log('⏭️  Skipping: Empty or too short message');
       return; // Don't respond to empty messages
+    }
+    
+    if (isInTicketFlow) {
+      console.log('🎫 User in ticket creation flow, allowing short responses');
     }
 
     console.log('🤖 Generating AI response...');
-    // Generate AI response
-    const aiResponse = await generateAIResponse(userMessage);
+    // Generate AI response with context
+    const aiResponse = await generateAIResponse(userMessage, chat_id);
     console.log('✅ AI response generated:', aiResponse);
 
     console.log('📤 Sending response to Lark...');
@@ -172,27 +394,117 @@ async function handleMessage(event) {
 }
 
 // Generate AI response using OpenAI
-async function generateAIResponse(userMessage) {
+async function generateAIResponse(userMessage, chatId) {
+  const startTime = Date.now();
+  
   try {
     console.log('🧠 Calling OpenAI with message:', userMessage);
     
-    // Try different models in order of preference
+    // Get or create conversation context
+    if (!conversationContext.has(chatId)) {
+      conversationContext.set(chatId, []);
+    }
+    
+    const context = conversationContext.get(chatId);
+    console.log('📚 Current context length:', context.length);
+    
+    // Check if user is in ticket creation flow
+    const ticketState = ticketCollectionState.get(chatId);
+    if (ticketState) {
+      return await handleTicketCreationFlow(chatId, userMessage, ticketState);
+    }
+    
+    // Check if user is confirming they want to create a ticket
+    const isConfirmingTicket = checkTicketConfirmation(context, userMessage);
+    if (isConfirmingTicket) {
+      console.log('✅ User confirming ticket creation, starting flow...');
+      const category = categorizeIssue(userMessage, context);
+      return await startTicketCreation(chatId, userMessage, category);
+    }
+    
+    // Check for escalation triggers
+    console.log('🎯 Checking escalation triggers for message:', userMessage);
+    const shouldEscalate = shouldEscalateToTicket(context, userMessage);
+    const category = categorizeIssue(userMessage);
+    console.log('📊 Escalation result:', shouldEscalate, 'Category:', category);
+    
+    if (shouldEscalate) {
+      console.log('🚨 Escalation triggered for category:', category);
+      
+      // Check for direct escalation phrases that should skip FAQs
+      const directEscalationPhrases = [
+        /still.*(not|doesn't|don't).*(work|working)/i,
+        /escalate.*to.*(support|team|human)/i,
+        /can.*i.*escalate/i,
+        /create.*ticket/i,
+        /not.*working/i
+      ];
+      
+      const isDirectEscalation = directEscalationPhrases.some(phrase => phrase.test(userMessage));
+      
+      if (isDirectEscalation) {
+        // Direct escalation - go straight to ticket creation
+        console.log('🎫 Direct escalation detected, starting ticket creation');
+        return await startTicketCreation(chatId, userMessage, category);
+      }
+      
+      // Check if we've already shown FAQs for this category
+      const hasShownFAQs = context.some(msg => 
+        msg.content && msg.content.toLowerCase().includes('faqs:') && 
+        msg.content.toLowerCase().includes(category.replace('_', ' ').toLowerCase())
+      );
+      
+      if (!hasShownFAQs && FAQ_RESPONSES[category]) {
+        // First escalation - show relevant FAQs
+        const faqResponse = `I understand you're having trouble. Let me share some relevant FAQs that might help:
+
+${FAQ_RESPONSES[category]}
+
+If these don't resolve your issue, I can create a support ticket for you to get personalized help. Just let me know!`;
+        
+        const responseTime = Date.now() - startTime;
+        trackRequest(userMessage, responseTime, false);
+        
+        // Update conversation context
+        context.push({ role: 'user', content: userMessage });
+        context.push({ role: 'assistant', content: faqResponse });
+        
+        return faqResponse;
+      } else {
+        // Second escalation or no specific FAQs - start ticket creation
+        return await startTicketCreation(chatId, userMessage, category);
+      }
+    }
+    
+    // Check cache first for common questions
+    const cachedResponse = getCachedResponse(userMessage);
+    if (cachedResponse) {
+      const responseTime = Date.now() - startTime;
+      trackRequest(userMessage, responseTime, true);
+      return cachedResponse;
+    }
+    
+    // Continue with normal AI response...
     const models = ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'];
     const selectedModel = process.env.OPENAI_MODEL || models[0];
     console.log('🔧 Using OpenAI model:', selectedModel);
     
-    const completion = await openai.chat.completions.create({
-      model: selectedModel,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a helpful assistant for the PM-Next Recruitment Management System. 
-          Your role is to help users navigate and understand how to use the application effectively.
-          
-          Use this knowledge base about PM-Next:
-          ${PM_NEXT_KNOWLEDGE}
-          
-          ENHANCED RESPONSE GUIDELINES:
+    // Build messages array with context
+    const messages = [
+      {
+        role: 'system',
+        content: `You are a helpful assistant for the PM-Next Recruitment Management System. 
+        Your role is to help users navigate and understand how to use the application effectively.
+        
+        IMPORTANT: 
+        - Always respond to user messages. Never leave a user without a response.
+        - Pay attention to conversation context - don't ask for details the user already provided.
+        - If user says "still not working" or similar, the system will automatically escalate.
+        
+        Use this knowledge base about PM-Next:
+        ${PM_NEXT_KNOWLEDGE}
+        
+        ENHANCED RESPONSE GUIDELINES:
           
           1. **Initial Response**: Provide clear, step-by-step instructions for navigation and usage
           
@@ -237,56 +549,65 @@ async function generateAIResponse(userMessage) {
           - Are you experiencing this across all features or specific ones?
           - What device and browser are you using?
           
-          3. **Smart Escalation**: If user indicates continued problems after follow-up questions, escalate to live support:
-          
-          **Escalation Triggers:**
-          - User mentions "still not working" or "tried that already"
-          - User expresses frustration ("this is ridiculous", "wasting time")
-          - Technical issues beyond basic troubleshooting
-          - Complex workflow problems requiring investigation
-          - User specifically requests human support
-          
-          **Escalation Response Template:**
-          "I understand this issue needs more specialized attention. Let me connect you with our live support team who can provide immediate assistance:
-          
-          🔗 **Join our PM-Next Support Chat**: [PM-Next Live Support Group](https://applink.larksuite.com/client/chat/chatter/add_by_link?link_token=3ddsabad-9efa-4856-ad86-a3974dk05ek2)
-          
-          Or contact our support team directly:
-          📧 **Email**: support@pm-next.com
-          📞 **Phone**: +1 (555) 123-4567
-          ⏰ **Hours**: Monday-Friday, 9 AM - 6 PM EST
-          
-          Please provide them with:
-          - A description of what you were trying to do
-          - The exact error message (if any)
-          - Your browser and device information
-          - When the issue started occurring
-          
-          Our live support team will be able to screen-share and provide hands-on assistance to resolve your issue quickly."
-          
-          4. **Response Parsing**: When users provide answers to your diagnostic questions, acknowledge their responses and provide targeted solutions or escalate if needed.
-          
-          5. **General Guidelines:**
+          3. **General Guidelines:**
           - Be specific about where to find features in the application
           - Keep responses concise but helpful
           - Use bullet points or numbered steps when appropriate
           - Always be friendly and professional
           - If asked about features not in the knowledge base, politely explain limitations and offer general guidance`
-        },
-        {
-          role: 'user',
-          content: userMessage
-        }
-      ],
-      max_tokens: 500,
-      temperature: 0.7
+      }
+    ];
+    
+    // Add conversation context (keep last 6 messages for context)
+    const recentContext = context.slice(-6);
+    messages.push(...recentContext);
+    
+    // Add current user message
+    messages.push({
+      role: 'user',
+      content: userMessage
+    });
+    
+    const completion = await openai.chat.completions.create({
+      model: selectedModel,
+      messages: messages,
+      max_tokens: 800,
+      temperature: 0.7,
+      stream: false
     });
 
+    const response = completion.choices[0].message.content;
+    
+    // Cache the response for common questions
+    setCachedResponse(userMessage, response);
+    
+    // Update conversation context
+    context.push({ role: 'user', content: userMessage });
+    context.push({ role: 'assistant', content: response });
+    
+    // Keep context manageable (last 20 messages)
+    if (context.length > 20) {
+      context.splice(0, context.length - 20);
+    }
+    
+    const responseTime = Date.now() - startTime;
+    trackRequest(userMessage, responseTime, false);
+    
     console.log('🎯 OpenAI response received successfully');
-    return completion.choices[0].message.content;
+    return response;
   } catch (error) {
+    analytics.errorCount++;
     console.error('❌ Error generating AI response:', error);
-    return 'Sorry, I encountered an error processing your request. Please try again or contact support if the issue persists.';
+    console.error('❌ Error details:', error.message);
+    
+    // Provide more specific error responses
+    if (error.message.includes('timeout')) {
+      return 'I apologize for the delay. The system is taking longer than usual to respond. Please try asking your question again, or contact our support team if this continues.';
+    } else if (error.message.includes('rate limit')) {
+      return 'I\'m currently experiencing high demand. Please wait a moment and try again.';
+    } else {
+      return 'I encountered a technical issue while processing your request. Please try rephrasing your question or our support team for immediate assistance.';
+    }
   }
 }
 
@@ -387,6 +708,203 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Analytics endpoint
+app.get('/analytics', (req, res) => {
+  const topQuestions = Array.from(analytics.commonQuestions.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([question, count]) => ({ question, count }));
+    
+  res.json({
+    totalRequests: analytics.totalRequests,
+    cacheHitRate: analytics.totalRequests > 0 ? 
+      (analytics.cacheHits / analytics.totalRequests * 100).toFixed(1) + '%' : '0%',
+    averageResponseTime: analytics.averageResponseTime.toFixed(0) + 'ms',
+    errorCount: analytics.errorCount,
+    errorRate: analytics.totalRequests > 0 ? 
+      (analytics.errorCount / analytics.totalRequests * 100).toFixed(1) + '%' : '0%',
+    activeRequests: activeRequests,
+    queueLength: requestQueue.length,
+    cacheSize: responseCache.size,
+    conversationsActive: conversationContext.size,
+    topQuestions: topQuestions,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Support tickets endpoints
+app.get('/tickets', async (req, res) => {
+  try {
+    const { status = 'open', limit = 50 } = req.query;
+    
+    let query = supabase
+      .from('support_tickets')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit));
+    
+    if (status !== 'all') {
+      query = query.eq('status', status);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+    
+    res.json({
+      tickets: data,
+      count: data.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch tickets' });
+  }
+});
+
+app.get('/tickets/:ticketNumber', async (req, res) => {
+  try {
+    const { ticketNumber } = req.params;
+    
+    const { data, error } = await supabase
+      .from('support_tickets')
+      .select('*')
+      .eq('ticket_number', ticketNumber)
+      .single();
+    
+    if (error) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+    
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch ticket' });
+  }
+});
+
+app.patch('/tickets/:ticketNumber', async (req, res) => {
+  try {
+    const { ticketNumber } = req.params;
+    const updates = req.body;
+    
+    // Add resolved timestamp if status is being set to resolved
+    if (updates.status === 'resolved' && !updates.resolved_at) {
+      updates.resolved_at = new Date().toISOString();
+    }
+    
+    const { data, error } = await supabase
+      .from('support_tickets')
+      .update(updates)
+      .eq('ticket_number', ticketNumber)
+      .select()
+      .single();
+    
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update ticket' });
+  }
+});
+
+// Test notification endpoint
+app.post('/test-notification', async (req, res) => {
+  try {
+    const { chatId } = req.body;
+    
+    if (!chatId) {
+      return res.status(400).json({ error: 'chatId is required' });
+    }
+    
+    const testTicket = {
+      ticket_number: 'TEST-' + Date.now(),
+      user_name: 'Test User',
+      issue_category: 'test',
+      issue_title: 'Test Notification',
+      issue_description: 'This is a test notification to verify the support team notification system.',
+      urgency_level: 'medium',
+      steps_attempted: ['Testing notification system'],
+      browser_info: 'Test Browser',
+      device_info: 'Test Device',
+      created_at: new Date().toISOString()
+    };
+    
+    // Override the support group ID temporarily
+    const originalGroupId = process.env.LARK_SUPPORT_GROUP_ID;
+    process.env.LARK_SUPPORT_GROUP_ID = chatId;
+    
+    await notifySupportTeam(testTicket);
+    
+    // Restore original group ID
+    process.env.LARK_SUPPORT_GROUP_ID = originalGroupId;
+    
+    res.json({ 
+      success: true, 
+      message: 'Test notification sent',
+      chatId: chatId 
+    });
+  } catch (error) {
+    console.error('❌ Test notification error:', error);
+    res.status(500).json({ error: 'Failed to send test notification' });
+  }
+});
+
+// Test ticket creation endpoint
+app.post('/test-ticket', async (req, res) => {
+  try {
+    console.log('🧪 Testing ticket creation...');
+    
+    const testTicketData = {
+      user_id: 'test_user_' + Date.now(),
+      chat_id: 'test_chat_' + Date.now(),
+      user_name: 'Test User',
+      issue_category: 'general',
+      issue_title: 'Test Ticket Creation',
+      issue_description: 'This is a test ticket to verify the database connection and ticket creation process.',
+      steps_attempted: ['Testing system'],
+      browser_info: 'Test Browser',
+      device_info: 'Test Device',
+      urgency_level: 'medium',
+      status: 'open',
+      conversation_context: {
+        test: true,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    const ticket = await createSupportTicket(testTicketData);
+    
+    if (ticket) {
+      res.json({ 
+        success: true, 
+        message: 'Test ticket created successfully',
+        ticket: {
+          ticket_number: ticket.ticket_number,
+          id: ticket.id,
+          created_at: ticket.created_at
+        }
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to create test ticket',
+        message: 'Check server logs for detailed error information'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Test ticket creation error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Exception during test ticket creation',
+      message: error.message 
+    });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
@@ -397,4 +915,358 @@ app.listen(PORT, () => {
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down PM-Next Lark Bot server...');
   process.exit(0);
-}); 
+});
+
+function trackRequest(message, responseTime, fromCache = false) {
+  analytics.totalRequests++;
+  if (fromCache) analytics.cacheHits++;
+  
+  // Update average response time
+  analytics.averageResponseTime = 
+    (analytics.averageResponseTime * (analytics.totalRequests - 1) + responseTime) / analytics.totalRequests;
+  
+  // Track common questions
+  const questionKey = message.toLowerCase().substring(0, 50);
+  analytics.commonQuestions.set(questionKey, 
+    (analytics.commonQuestions.get(questionKey) || 0) + 1);
+  
+  console.log(`📈 Analytics: ${analytics.totalRequests} requests, ${analytics.cacheHits} cache hits (${(analytics.cacheHits/analytics.totalRequests*100).toFixed(1)}%), avg ${analytics.averageResponseTime.toFixed(0)}ms`);
+}
+
+async function createSupportTicket(ticketData) {
+  try {
+    console.log('📝 Inserting ticket into database...');
+    console.log('🔗 Supabase URL configured:', !!process.env.SUPABASE_URL);
+    console.log('🔑 Supabase key configured:', !!process.env.SUPABASE_ANON_KEY);
+    
+    const { data, error } = await supabase
+      .from('support_tickets')
+      .insert([ticketData])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('❌ Supabase error creating support ticket:', {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      });
+      console.error('❌ Full error object:', JSON.stringify(error, null, 2));
+      return null;
+    }
+
+    if (!data) {
+      console.error('❌ No data returned from Supabase insert');
+      return null;
+    }
+
+    console.log('🎫 Support ticket created successfully:', data.ticket_number);
+    console.log('📋 Ticket data:', JSON.stringify(data, null, 2));
+    return data;
+  } catch (error) {
+    console.error('❌ Exception in createSupportTicket:', error.message);
+    console.error('❌ Exception stack:', error.stack);
+    console.error('❌ Exception full:', JSON.stringify(error, null, 2));
+    return null;
+  }
+}
+
+async function notifySupportTeam(ticket) {
+  try {
+    // Send notification to support group chat
+    const supportGroupId = process.env.LARK_SUPPORT_GROUP_ID;
+    if (!supportGroupId) {
+      console.log('⚠️ No support group ID configured');
+      return;
+    }
+
+    const message = `🚨 **New Support Ticket Created**
+
+**Ticket**: ${ticket.ticket_number}
+**User**: ${ticket.user_name || 'Unknown'}
+**Category**: ${ticket.issue_category}
+**Title**: ${ticket.issue_title}
+**Urgency**: ${ticket.urgency_level}
+
+**Description**: ${ticket.issue_description}
+
+**Steps Attempted**: ${ticket.steps_attempted?.join(', ') || 'None specified'}
+
+**Browser/Device**: ${ticket.browser_info || 'Not specified'} / ${ticket.device_info || 'Not specified'}
+
+**Created**: ${new Date(ticket.created_at).toLocaleString()}
+
+Please assign and respond to this ticket promptly.`;
+
+    await sendMessage(supportGroupId, message);
+    console.log('📢 Support team notified for ticket:', ticket.ticket_number);
+  } catch (error) {
+    console.error('❌ Error notifying support team:', error);
+  }
+}
+
+function categorizeIssue(message, context = []) {
+  const lowerMessage = message.toLowerCase();
+  
+  // First check the current message
+  for (const [keyword, category] of Object.entries(ISSUE_CATEGORIES)) {
+    if (lowerMessage.includes(keyword)) {
+      return category;
+    }
+  }
+  
+  // If no category found in current message, check recent context
+  if (context.length > 0) {
+    const recentContext = context.slice(-6).map(msg => msg.content?.toLowerCase() || '').join(' ');
+    for (const [keyword, category] of Object.entries(ISSUE_CATEGORIES)) {
+      if (recentContext.includes(keyword)) {
+        return category;
+      }
+    }
+  }
+  
+  return 'general';
+}
+
+function checkTicketConfirmation(context, userMessage) {
+  // Check if the previous assistant message offered to create a ticket
+  const recentMessages = context.slice(-4); // Look at last 4 messages
+  const botOfferedTicket = recentMessages.some(msg => 
+    msg.role === 'assistant' && 
+    msg.content && 
+    (msg.content.toLowerCase().includes('create a support ticket') ||
+     msg.content.toLowerCase().includes('create a ticket') ||
+     msg.content.toLowerCase().includes('support ticket for you'))
+  );
+  
+  if (!botOfferedTicket) return false;
+  
+  // Check if user is confirming
+  const confirmationPhrases = [
+    /^yes$/i,
+    /^yes please$/i,
+    /^yeah$/i,
+    /^sure$/i,
+    /^ok$/i,
+    /^okay$/i,
+    /yes.*create/i,
+    /yes.*ticket/i,
+    /please.*create/i,
+    /go ahead/i,
+    /^do it$/i
+  ];
+  
+  return confirmationPhrases.some(phrase => phrase.test(userMessage.trim()));
+}
+
+function shouldEscalateToTicket(context, userMessage) {
+  const escalationTriggers = [
+    /still.*(not|doesn't|don't|doesnt).*(work|working|help|helping)/i,
+    /tried.*(that|everything|all)/i,
+    /doesn't.*(work|help)/i,
+    /doesnt.*(work|help)/i,
+    /still.*not.*working/i,
+    /still.*doesnt.*work/i,
+    /still.*having.*trouble/i,
+    /need.*(human|person|live|real).*(help|support)/i,
+    /speak.*(to|with).*(someone|person|human)/i,
+    /this.*(is|isn't).*(working|helpful)/i,
+    /frustrated/i,
+    /urgent/i,
+    /critical/i,
+    /escalate.*to.*(support|team|human)/i,
+    /can.*i.*escalate/i,
+    /create.*ticket/i,
+    /(cant|can't|cannot).*(add|create|upload|login|access)/i,
+    /not.*working/i,
+    /having.*trouble/i,
+    /error/i
+  ];
+
+  console.log('🔍 Checking escalation for message:', userMessage);
+  const shouldEscalate = escalationTriggers.some(trigger => {
+    const matches = trigger.test(userMessage);
+    if (matches) {
+      console.log('✅ Escalation trigger matched:', trigger);
+    }
+    return matches;
+  });
+  console.log('🚨 Should escalate:', shouldEscalate);
+  
+  return shouldEscalate;
+}
+
+async function startTicketCreation(chatId, userMessage, category) {
+  console.log('🎫 Starting ticket creation for chat:', chatId);
+  
+  // Initialize ticket collection state
+  ticketCollectionState.set(chatId, {
+    step: 'title',
+    category: category,
+    originalMessage: userMessage,
+    data: {}
+  });
+  
+  return `I'll help you create a support ticket to get personalized assistance. Let me collect some details:
+
+**Step 1 of 5: Issue Title**
+Please provide a brief title that describes your issue (e.g., "Cannot add candidate to job", "Login page not loading"):`;
+}
+
+async function handleTicketCreationFlow(chatId, userMessage, ticketState) {
+  const { step, data, category } = ticketState;
+  
+  switch (step) {
+    case 'title':
+      data.title = userMessage.trim();
+      ticketState.step = 'description';
+      ticketCollectionState.set(chatId, ticketState);
+      
+      return `**Step 2 of 5: Detailed Description**
+Please describe the issue in detail. What exactly happens when you try to perform the action?`;
+
+    case 'description':
+      data.description = userMessage.trim();
+      ticketState.step = 'steps';
+      ticketCollectionState.set(chatId, ticketState);
+      
+      return `**Step 3 of 5: Steps Attempted**
+What steps have you already tried to resolve this issue? (e.g., "Refreshed page, cleared cache, tried different browser")`;
+
+    case 'steps':
+      data.stepsAttempted = userMessage.trim().split(',').map(s => s.trim());
+      ticketState.step = 'browser';
+      ticketCollectionState.set(chatId, ticketState);
+      
+      return `**Step 4 of 5: Browser & Device**
+What browser and device are you using? (e.g., "Chrome on MacBook", "Safari on iPhone")`;
+
+    case 'browser':
+      const browserDevice = userMessage.trim();
+      data.browser = browserDevice.includes(' on ') ? browserDevice.split(' on ')[0] : browserDevice;
+      data.device = browserDevice.includes(' on ') ? browserDevice.split(' on ')[1] : 'Not specified';
+      ticketState.step = 'urgency';
+      ticketCollectionState.set(chatId, ticketState);
+      
+      return `**Step 5 of 5: Urgency Level**
+How urgent is this issue?
+1. **Low** - Minor inconvenience, can wait
+2. **Medium** - Affecting work but has workarounds  
+3. **High** - Blocking important tasks
+4. **Critical** - System completely unusable
+
+Please reply with the number (1-4):`;
+
+    case 'urgency':
+      const urgencyMap = { '1': 'low', '2': 'medium', '3': 'high', '4': 'critical' };
+      data.urgency = urgencyMap[userMessage.trim()] || 'medium';
+      
+      // Create the ticket
+      const ticket = await createTicketFromData(chatId, data, category, ticketState.originalMessage);
+      
+      // Clear the collection state
+      ticketCollectionState.delete(chatId);
+      
+      if (ticket) {
+        console.log('🎯 Ticket created successfully, notifying support team...');
+        
+        // Notify support team
+        try {
+          await notifySupportTeam(ticket);
+          console.log('📢 Support team notification sent successfully');
+        } catch (notifyError) {
+          console.error('⚠️ Failed to notify support team:', notifyError);
+          // Continue anyway - ticket was created
+        }
+        
+        return `✅ **Support Ticket Created Successfully!**
+
+**Ticket Number**: ${ticket.ticket_number}
+**Status**: Open
+**Urgency**: ${data.urgency.toUpperCase()}
+
+Your ticket has been submitted and our support team has been notified. They will review your issue and respond as soon as possible.
+
+**What happens next:**
+• Our support team will review your ticket
+• You'll receive updates on the progress
+• A support agent may reach out for additional information
+
+**Estimated Response Time:**
+• Critical: Within 1 hour
+• High: Within 4 hours  
+• Medium: Within 24 hours
+• Low: Within 48 hours
+
+Thank you for providing detailed information. Is there anything else I can help you with?`;
+      } else {
+        console.log('❌ Ticket creation failed - returning error message to user');
+        return `❌ I encountered an error creating your support ticket. This could be due to:
+
+• Database connection issues
+• Missing required information
+• System configuration problems
+
+**Please try again in a few minutes, or contact our support team directly:**
+
+📧 Email: support@pm-next.com
+💬 Direct Chat: https://applink.larksuite.com/client/chat/chatter/add_by_link?link_token=3ddsabad-9efa-4856-ad86-a3974dk05ek2
+
+I apologize for the inconvenience. Our technical team has been notified of this issue.`;
+      }
+
+    default:
+      // Reset if in unknown state
+      ticketCollectionState.delete(chatId);
+      return `I encountered an error in the ticket creation process. Let me start over. Please describe your issue and I'll help you create a support ticket.`;
+  }
+}
+
+async function createTicketFromData(chatId, data, category, originalMessage) {
+  try {
+    console.log('🔧 Creating ticket with data:', {
+      chatId,
+      category,
+      title: data.title,
+      urgency: data.urgency
+    });
+    
+    // Get user info from Lark (you might want to implement this)
+    const userId = 'user_' + chatId; // Simplified for now
+    
+    const ticketData = {
+      user_id: userId,
+      chat_id: chatId,
+      user_name: data.userName || 'Lark User',
+      issue_category: category,
+      issue_title: data.title,
+      issue_description: data.description,
+      steps_attempted: data.stepsAttempted || [],
+      browser_info: data.browser || 'Not specified',
+      device_info: data.device || 'Not specified',
+      urgency_level: data.urgency || 'medium',
+      status: 'open',
+      conversation_context: {
+        original_message: originalMessage,
+        collected_data: data
+      }
+    };
+    
+    console.log('🎫 Sending ticket data to database:', JSON.stringify(ticketData, null, 2));
+    
+    const result = await createSupportTicket(ticketData);
+    
+    if (result) {
+      console.log('✅ Ticket created successfully:', result.ticket_number);
+    } else {
+      console.log('❌ Ticket creation failed - no result returned');
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('❌ Error creating ticket from data:', error);
+    console.error('❌ Error stack:', error.stack);
+    return null;
+  }
+} 

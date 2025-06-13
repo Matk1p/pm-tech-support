@@ -1,4 +1,3 @@
-
 # PM-Next Recruitment Management System - Comprehensive Knowledge Base
 
 ## Core Features and Navigation
