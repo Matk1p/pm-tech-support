@@ -1,0 +1,45 @@
+{
+  "name": "pm-next-lark-bot",
+  "version": "1.0.0",
+  "description": "Lark bot for PM-Next Recruitment Management System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "npm run validate:env && npm run knowledge && npm run build:check",
+    "build:check": "node -c server.js && node -c api/webhook.js && echo '✅ Build validation passed'",
+    "build:clean": "rm -rf dist && mkdir -p dist",
+    "build:copy": "cp -r . dist/ && rm -rf dist/node_modules dist/.git",
+    "build:prod": "npm run build:clean && npm run validate:env && npm run knowledge && npm run build:copy && cd dist && npm install --production",
+    "validate:env": "node -e \"require('dotenv').config(); const required=['LARK_APP_ID','LARK_APP_SECRET','OPENAI_API_KEY']; const missing=required.filter(key=>!process.env[key]); if(missing.length){console.error('❌ Missing environment variables:',missing.join(', ')); process.exit(1);} console.log('✅ Environment variables validated');\"",
+    "test-local": "node test-setup.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "vercel-build": "npm run build",
+    "setup": "node setup.js",
+    "knowledge": "node knowledge-extractor.js",
+    "health-check": "curl -f http://localhost:3001/health || exit 1",
+    "deploy:check": "npm run build && npm run health-check"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "openai": "^4.20.0",
+    "crypto": "^1.0.1",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "@larksuiteoapi/node-sdk": "^1.22.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "lark",
+    "bot",
+    "recruitment",
+    "openai",
+    "pm-next"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+} 

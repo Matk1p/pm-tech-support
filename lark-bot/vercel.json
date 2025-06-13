@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "name": "pm-next-lark-bot",
+  "builds": [
+    {
+      "src": "api/webhook.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/lark/events",
+      "dest": "/api/webhook"
+    },
+    {
+      "src": "/health",
+      "dest": "/api/health"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/api/webhook"
+    }
+  ],
+  "env": {
+    "LARK_APP_ID": "@lark_app_id",
+    "LARK_APP_SECRET": "@lark_app_secret",
+    "LARK_VERIFICATION_TOKEN": "@lark_verification_token",
+    "OPENAI_API_KEY": "@openai_api_key",
+    "OPENAI_MODEL": "@openai_model"
+  }
+} 
