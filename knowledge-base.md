@@ -1,4 +1,4 @@
-# PM-Next Recruitment Management System — Knowledge Base (Condensed)
+# PM-Next Recruitment Management System — Knowledge Base
 
 ## Navigation Quick Reference
 
@@ -24,10 +24,17 @@
 • Link one candidate to many jobs  
 • Tags, notes, communication log
 
-Key actions:  
-1. Add candidate: Add New → fill form → (opt) upload résumé → Save  
-2. Manage applications: Candidate → Applications tab  
-3. Update status: status dropdown
+**Key actions:**  
+1. **Add candidate**: Candidates → Add New → fill form → (optional) upload résumé → Save  
+2. **Manage applications**: Candidate profile → Applications tab → Add to Job  
+3. **Update status**: Use status dropdown in candidate profile
+4. **Upload resume**: Drag & drop or click upload button (supports PDF, DOC, DOCX up to 10MB)
+
+**Common Issues:**
+• Resume not parsing? Check file format (PDF/DOC/DOCX) and size (<10MB)
+• Candidate not saving? Ensure all required fields (*) are filled
+• Can't find candidate? Use search bar or check status filters
+• Error uploading? Try different browser or smaller file size
 
 ### Jobs
 • Create / edit / close job posts  
@@ -35,9 +42,16 @@ Key actions:
 • Budget & commission split  
 • Track candidate applications
 
-Key actions:  
-1. Create job: Create Job → fill details → Save  
-2. Edit job: click title → update → Save
+**Key actions:**  
+1. **Create job**: Jobs → Create Job → fill details → link to client → Save  
+2. **Edit job**: Click job title → update fields → Save
+3. **Add candidates**: Job profile → Candidates section → Add Candidate
+4. **Change status**: Use status dropdown (Active/Closed/On Hold)
+
+**Common Issues:**
+• Job not saving? Check all required fields are completed
+• Can't find job? Use search or check job status filters
+• Candidates not linking? Ensure both candidate and job exist
 
 ### Clients
 • Company profile & contacts  
@@ -69,39 +83,63 @@ Key actions:
 • Targets & performance metrics  
 • Leave management
 
-## How-To Cheat-Sheet
+## Quick Troubleshooting
 
-| Task | Steps |
-|------|-------|
-| Add Candidate | Candidates → Add New → fill form → (upload résumé) → Save |
-| Create Job | Jobs → Create Job → fill fields → Save |
-| Schedule Interview | Calendar → New Event → select candidate & job → set time → invite attendees |
-| Track Deal | Pipeline → drag deal to next stage → adjust probability |
-| Submit Expense | Expenses → New Claim → add items & receipts → Submit |
-
-## Troubleshooting Snippets
-
-**Login**  
+**Login Issues**  
 • Clear browser cache & cookies  
-• Check credentials  
-• Contact admin for reset
+• Try incognito/private mode
+• Check credentials with admin
+• Use "Forgot Password" if available
 
 **Upload Errors**  
-• Max 10 MB; PDF/DOC/DOCX only  
-• Try different browser  
-• Error 413/415 → file too big / unsupported
+• Max file size: 10 MB
+• Supported formats: PDF, DOC, DOCX only  
+• Try different browser (Chrome, Firefox, Safari recommended)
+• Check internet connection stability
 
-**Data Not Loading**  
-• Refresh page  
+**Data Not Loading/Saving**  
+• Refresh the page (F5 or Ctrl+R)
 • Check internet connection  
-• Log out & in again
+• Log out and log back in
+• Clear browser cache if issue persists
 
-**Slow Performance**  
-• Close unused tabs  
-• Clear cache  
-• Check network speed
+**Performance Issues**  
+• Close unused browser tabs  
+• Clear browser cache and cookies
+• Check internet speed
+• Try different browser
 
-## Support Escalation
-Trigger phrases: "still not working", "tried that", user asks for human help.  
-Escalate to live support:
-• Join our Lark Support Group: https://applink.larksuite.com/client/chat/chatter/add_by_link?link_token=3ddsabad-9efa-4856-ad86-a3974dk05ek2 
+## Getting Help
+
+**When to get automated support:**
+Say phrases like:
+• "I can't add a job"
+• "Upload not working" 
+• "Having trouble with..."
+• "This isn't working"
+• "Can I escalate to support?"
+
+**Automated Ticket System:**
+If the basic troubleshooting doesn't help, I can create a support ticket that will:
+• Collect detailed information about your issue
+• Categorize the problem appropriately  
+• Set urgency level (Low/Medium/High/Critical)
+• Notify our support team immediately
+• Provide you with a ticket number for tracking
+
+**Support Response Times:**
+• **Critical**: Within 1 hour (system completely unusable)
+• **High**: Within 4 hours (blocking important tasks)  
+• **Medium**: Within 24 hours (affecting work but has workarounds)
+• **Low**: Within 48 hours (minor inconvenience)
+
+**Manual Escalation:**
+For immediate human assistance, join our Lark Support Group: 
+https://applink.larksuite.com/client/chat/chatter/add_by_link?link_token=3ddsabad-9efa-4856-ad86-a3974dk05ek2
+
+## Pro Tips
+• **Search everywhere**: Use the global search bar to quickly find candidates, jobs, or clients
+• **Use filters**: Most lists have filter options to narrow down results
+• **Keyboard shortcuts**: Ctrl+S to save forms quickly
+• **Bulk actions**: Select multiple items for bulk operations where available
+• **Export data**: Most reports can be exported to CSV or PDF for external use 
