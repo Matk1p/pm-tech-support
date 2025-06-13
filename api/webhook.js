@@ -6,7 +6,7 @@ const larkClient = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
   appType: 'self-built',
-  domain: lark.Domain.Feishu
+  domain: 'larksuite'
 });
 
 // Initialize OpenAI client
