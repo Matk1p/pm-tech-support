@@ -121,7 +121,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    if (req.method === 'POST' && req.url === '/lark/events') {
+    if (req.method === 'POST') {
       const { type, challenge, event } = req.body;
 
       // Handle URL verification
