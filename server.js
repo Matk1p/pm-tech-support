@@ -414,9 +414,19 @@ async function generateAIResponse(userMessage, chatId) {
       return await handleTicketCreationFlow(chatId, userMessage, ticketState);
     }
     
+    // Check if user is confirming they want to create a ticket
+    const isConfirmingTicket = checkTicketConfirmation(context, userMessage);
+    if (isConfirmingTicket) {
+      console.log('✅ User confirming ticket creation, starting flow...');
+      const category = categorizeIssue(userMessage, context);
+      return await startTicketCreation(chatId, userMessage, category);
+    }
+    
     // Check for escalation triggers
+    console.log('🎯 Checking escalation triggers for message:', userMessage);
     const shouldEscalate = shouldEscalateToTicket(context, userMessage);
     const category = categorizeIssue(userMessage);
+    console.log('📊 Escalation result:', shouldEscalate, 'Category:', category);
     
     if (shouldEscalate) {
       console.log('🚨 Escalation triggered for category:', category);
@@ -440,7 +450,8 @@ async function generateAIResponse(userMessage, chatId) {
       
       // Check if we've already shown FAQs for this category
       const hasShownFAQs = context.some(msg => 
-        msg.content && msg.content.includes('**' + category.replace('_', ' ').toUpperCase() + ' FAQs:**')
+        msg.content && msg.content.toLowerCase().includes('faqs:') && 
+        msg.content.toLowerCase().includes(category.replace('_', ' ').toLowerCase())
       );
       
       if (!hasShownFAQs && FAQ_RESPONSES[category]) {
@@ -842,6 +853,58 @@ app.post('/test-notification', async (req, res) => {
   }
 });
 
+// Test ticket creation endpoint
+app.post('/test-ticket', async (req, res) => {
+  try {
+    console.log('🧪 Testing ticket creation...');
+    
+    const testTicketData = {
+      user_id: 'test_user_' + Date.now(),
+      chat_id: 'test_chat_' + Date.now(),
+      user_name: 'Test User',
+      issue_category: 'general',
+      issue_title: 'Test Ticket Creation',
+      issue_description: 'This is a test ticket to verify the database connection and ticket creation process.',
+      steps_attempted: ['Testing system'],
+      browser_info: 'Test Browser',
+      device_info: 'Test Device',
+      urgency_level: 'medium',
+      status: 'open',
+      conversation_context: {
+        test: true,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    const ticket = await createSupportTicket(testTicketData);
+    
+    if (ticket) {
+      res.json({ 
+        success: true, 
+        message: 'Test ticket created successfully',
+        ticket: {
+          ticket_number: ticket.ticket_number,
+          id: ticket.id,
+          created_at: ticket.created_at
+        }
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to create test ticket',
+        message: 'Check server logs for detailed error information'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Test ticket creation error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Exception during test ticket creation',
+      message: error.message 
+    });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
@@ -872,6 +935,10 @@ function trackRequest(message, responseTime, fromCache = false) {
 
 async function createSupportTicket(ticketData) {
   try {
+    console.log('📝 Inserting ticket into database...');
+    console.log('🔗 Supabase URL configured:', !!process.env.SUPABASE_URL);
+    console.log('🔑 Supabase key configured:', !!process.env.SUPABASE_ANON_KEY);
+    
     const { data, error } = await supabase
       .from('support_tickets')
       .insert([ticketData])
@@ -879,14 +946,28 @@ async function createSupportTicket(ticketData) {
       .single();
 
     if (error) {
-      console.error('❌ Error creating support ticket:', error);
+      console.error('❌ Supabase error creating support ticket:', {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      });
+      console.error('❌ Full error object:', JSON.stringify(error, null, 2));
       return null;
     }
 
-    console.log('🎫 Support ticket created:', data.ticket_number);
+    if (!data) {
+      console.error('❌ No data returned from Supabase insert');
+      return null;
+    }
+
+    console.log('🎫 Support ticket created successfully:', data.ticket_number);
+    console.log('📋 Ticket data:', JSON.stringify(data, null, 2));
     return data;
   } catch (error) {
-    console.error('❌ Error in createSupportTicket:', error);
+    console.error('❌ Exception in createSupportTicket:', error.message);
+    console.error('❌ Exception stack:', error.stack);
+    console.error('❌ Exception full:', JSON.stringify(error, null, 2));
     return null;
   }
 }
@@ -925,23 +1006,69 @@ Please assign and respond to this ticket promptly.`;
   }
 }
 
-function categorizeIssue(message) {
+function categorizeIssue(message, context = []) {
   const lowerMessage = message.toLowerCase();
   
+  // First check the current message
   for (const [keyword, category] of Object.entries(ISSUE_CATEGORIES)) {
     if (lowerMessage.includes(keyword)) {
       return category;
     }
   }
   
+  // If no category found in current message, check recent context
+  if (context.length > 0) {
+    const recentContext = context.slice(-6).map(msg => msg.content?.toLowerCase() || '').join(' ');
+    for (const [keyword, category] of Object.entries(ISSUE_CATEGORIES)) {
+      if (recentContext.includes(keyword)) {
+        return category;
+      }
+    }
+  }
+  
   return 'general';
+}
+
+function checkTicketConfirmation(context, userMessage) {
+  // Check if the previous assistant message offered to create a ticket
+  const recentMessages = context.slice(-4); // Look at last 4 messages
+  const botOfferedTicket = recentMessages.some(msg => 
+    msg.role === 'assistant' && 
+    msg.content && 
+    (msg.content.toLowerCase().includes('create a support ticket') ||
+     msg.content.toLowerCase().includes('create a ticket') ||
+     msg.content.toLowerCase().includes('support ticket for you'))
+  );
+  
+  if (!botOfferedTicket) return false;
+  
+  // Check if user is confirming
+  const confirmationPhrases = [
+    /^yes$/i,
+    /^yes please$/i,
+    /^yeah$/i,
+    /^sure$/i,
+    /^ok$/i,
+    /^okay$/i,
+    /yes.*create/i,
+    /yes.*ticket/i,
+    /please.*create/i,
+    /go ahead/i,
+    /^do it$/i
+  ];
+  
+  return confirmationPhrases.some(phrase => phrase.test(userMessage.trim()));
 }
 
 function shouldEscalateToTicket(context, userMessage) {
   const escalationTriggers = [
-    /still.*(not|doesn't|don't).*(work|working)/i,
+    /still.*(not|doesn't|don't|doesnt).*(work|working|help|helping)/i,
     /tried.*(that|everything|all)/i,
     /doesn't.*(work|help)/i,
+    /doesnt.*(work|help)/i,
+    /still.*not.*working/i,
+    /still.*doesnt.*work/i,
+    /still.*having.*trouble/i,
     /need.*(human|person|live|real).*(help|support)/i,
     /speak.*(to|with).*(someone|person|human)/i,
     /this.*(is|isn't).*(working|helpful)/i,
@@ -957,7 +1084,17 @@ function shouldEscalateToTicket(context, userMessage) {
     /error/i
   ];
 
-  return escalationTriggers.some(trigger => trigger.test(userMessage));
+  console.log('🔍 Checking escalation for message:', userMessage);
+  const shouldEscalate = escalationTriggers.some(trigger => {
+    const matches = trigger.test(userMessage);
+    if (matches) {
+      console.log('✅ Escalation trigger matched:', trigger);
+    }
+    return matches;
+  });
+  console.log('🚨 Should escalate:', shouldEscalate);
+  
+  return shouldEscalate;
 }
 
 async function startTicketCreation(chatId, userMessage, category) {
@@ -1032,8 +1169,16 @@ Please reply with the number (1-4):`;
       ticketCollectionState.delete(chatId);
       
       if (ticket) {
+        console.log('🎯 Ticket created successfully, notifying support team...');
+        
         // Notify support team
-        await notifySupportTeam(ticket);
+        try {
+          await notifySupportTeam(ticket);
+          console.log('📢 Support team notification sent successfully');
+        } catch (notifyError) {
+          console.error('⚠️ Failed to notify support team:', notifyError);
+          // Continue anyway - ticket was created
+        }
         
         return `✅ **Support Ticket Created Successfully!**
 
@@ -1056,7 +1201,19 @@ Your ticket has been submitted and our support team has been notified. They will
 
 Thank you for providing detailed information. Is there anything else I can help you with?`;
       } else {
-        return `❌ I encountered an error creating your support ticket. Please try again or contact our support team directly at: https://applink.larksuite.com/client/chat/chatter/add_by_link?link_token=3ddsabad-9efa-4856-ad86-a3974dk05ek2`;
+        console.log('❌ Ticket creation failed - returning error message to user');
+        return `❌ I encountered an error creating your support ticket. This could be due to:
+
+• Database connection issues
+• Missing required information
+• System configuration problems
+
+**Please try again in a few minutes, or contact our support team directly:**
+
+📧 Email: support@pm-next.com
+💬 Direct Chat: https://applink.larksuite.com/client/chat/chatter/add_by_link?link_token=3ddsabad-9efa-4856-ad86-a3974dk05ek2
+
+I apologize for the inconvenience. Our technical team has been notified of this issue.`;
       }
 
     default:
@@ -1068,6 +1225,13 @@ Thank you for providing detailed information. Is there anything else I can help 
 
 async function createTicketFromData(chatId, data, category, originalMessage) {
   try {
+    console.log('🔧 Creating ticket with data:', {
+      chatId,
+      category,
+      title: data.title,
+      urgency: data.urgency
+    });
+    
     // Get user info from Lark (you might want to implement this)
     const userId = 'user_' + chatId; // Simplified for now
     
@@ -1078,19 +1242,31 @@ async function createTicketFromData(chatId, data, category, originalMessage) {
       issue_category: category,
       issue_title: data.title,
       issue_description: data.description,
-      steps_attempted: data.stepsAttempted,
-      browser_info: data.browser,
-      device_info: data.device,
-      urgency_level: data.urgency,
+      steps_attempted: data.stepsAttempted || [],
+      browser_info: data.browser || 'Not specified',
+      device_info: data.device || 'Not specified',
+      urgency_level: data.urgency || 'medium',
+      status: 'open',
       conversation_context: {
         original_message: originalMessage,
         collected_data: data
       }
     };
     
-    return await createSupportTicket(ticketData);
+    console.log('🎫 Sending ticket data to database:', JSON.stringify(ticketData, null, 2));
+    
+    const result = await createSupportTicket(ticketData);
+    
+    if (result) {
+      console.log('✅ Ticket created successfully:', result.ticket_number);
+    } else {
+      console.log('❌ Ticket creation failed - no result returned');
+    }
+    
+    return result;
   } catch (error) {
     console.error('❌ Error creating ticket from data:', error);
+    console.error('❌ Error stack:', error.stack);
     return null;
   }
 } 
