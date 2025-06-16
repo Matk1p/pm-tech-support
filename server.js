@@ -1314,11 +1314,11 @@ app.post('/update-knowledge-base', async (req, res) => {
       });
     }
     
-    // Update knowledge base
-    const success = await updateKnowledgeBase(qaPair);
+    // Update knowledge base (database-first approach)
+    const success = await addToKnowledgeBase(qaPair);
     if (!success) {
       return res.status(500).json({ 
-        error: 'Failed to update knowledge base file' 
+        error: 'Failed to update knowledge base' 
       });
     }
     
