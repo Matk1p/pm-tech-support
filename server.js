@@ -334,6 +334,10 @@ async function addToKnowledgeBase(qaPair) {
     if (error) {
       console.log('⚠️ Database insert failed:', error.message);
       console.log('🔍 Error details:', JSON.stringify(error, null, 2));
+      console.log('🔧 Environment check:');
+      console.log('   - SUPABASE_URL:', process.env.SUPABASE_URL ? 'Set' : 'Missing');
+      console.log('   - SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY ? 'Set' : 'Missing');
+      console.log('   - VERCEL environment:', process.env.VERCEL ? 'Yes' : 'No');
       
       // Check if it's a permission issue
       if (error.code === '42501' || error.message.includes('permission denied')) {
@@ -341,7 +345,13 @@ async function addToKnowledgeBase(qaPair) {
         console.log('💡 Check fix-rls-policies.sql for SQL commands to fix this');
       }
       
-      // Fallback to file update for local development
+      // Don't fallback to file updates in production (Vercel)
+      if (process.env.VERCEL) {
+        console.log('❌ Cannot fallback to file updates in Vercel deployment');
+        return false;
+      }
+      
+      // Fallback to file update for local development only
       console.log('🔄 Falling back to file-based knowledge base update...');
       return await updateKnowledgeBase(qaPair);
     }
@@ -355,7 +365,14 @@ async function addToKnowledgeBase(qaPair) {
     
   } catch (error) {
     console.error('❌ Error adding to knowledge base:', error);
-    // Final fallback to file update
+    
+    // Don't fallback to file updates in production (Vercel)
+    if (process.env.VERCEL) {
+      console.log('❌ Cannot fallback to file updates in Vercel deployment');
+      return false;
+    }
+    
+    // Final fallback to file update for local development only
     return await updateKnowledgeBase(qaPair);
   }
 }

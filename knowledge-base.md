@@ -1,3 +1,4 @@
+
 # PM-Next Recruitment Management System - Comprehensive Knowledge Base
 
 ## Core Features and Navigation
@@ -92,7 +93,6 @@
 5. Choose client from dropdown
 6. Set job status to "Active"
 7. Click "Save" to publish
-
 
 ### Q: Where can I see the analytics?
 **A**:
