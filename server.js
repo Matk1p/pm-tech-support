@@ -36,6 +36,23 @@ const analytics = {
 // Support ticket system
 const ticketCollectionState = new Map(); // Track users in ticket creation flow
 
+// Knowledge base auto-update system
+const SOLUTION_KEYWORDS = [
+  'solution:', 'fix:', 'resolved:', 'answer:', 'steps to fix:', 'how to fix:',
+  'to resolve this:', 'the issue is:', 'you need to:', 'try this:',
+  'fixed by:', 'solution is:', 'resolve by:', 'fix this by:',
+  'here\'s the solution:', 'here is how to fix:', 'problem solved:'
+];
+
+const KNOWLEDGE_UPDATE_INDICATORS = [
+  'for future reference', 'common issue', 'similar problem', 'faq',
+  'frequently asked', 'add to kb', 'add to knowledge base', 'update kb',
+  'document this', 'remember this solution', 'save this solution'
+];
+
+// Track support team messages for knowledge base updates
+const supportTicketReplies = new Map(); // ticket_number -> reply_data
+
 // Issue categories for classification
 const ISSUE_CATEGORIES = {
   'candidate': 'candidate_management',
@@ -379,15 +396,22 @@ async function handleMessage(event) {
       console.log('🎫 User in ticket creation flow, allowing short responses');
     }
 
-    console.log('🤖 Generating AI response...');
-    // Generate AI response with context, passing sender information
-    const aiResponse = await generateAIResponse(userMessage, chat_id, sender_id);
-    console.log('✅ AI response generated:', aiResponse);
+    // Check if this is a support solution for knowledge base update
+    const solutionProcessed = await processSupportSolution(userMessage, chat_id, sender_id);
+    
+    if (!solutionProcessed) {
+      console.log('🤖 Generating AI response...');
+      // Generate AI response with context, passing sender information
+      const aiResponse = await generateAIResponse(userMessage, chat_id, sender_id);
+      console.log('✅ AI response generated:', aiResponse);
 
-    console.log('📤 Sending response to Lark...');
-    // Send response back to Lark
-    await sendMessage(chat_id, aiResponse);
-    console.log('🎉 Message sent successfully!');
+      console.log('📤 Sending response to Lark...');
+      // Send response back to Lark
+      await sendMessage(chat_id, aiResponse);
+      console.log('🎉 Message sent successfully!');
+    } else {
+      console.log('📚 Support solution processed, knowledge base updated!');
+    }
     
   } catch (error) {
     console.error('❌ Error handling message:', error);
@@ -1087,6 +1111,196 @@ app.post('/test-ticket', async (req, res) => {
   }
 });
 
+// Knowledge Base Update Endpoints
+
+// Manually trigger knowledge base update from ticket solution
+app.post('/update-knowledge-base', async (req, res) => {
+  try {
+    const { ticketNumber, solution, forceUpdate = false } = req.body;
+    
+    if (!ticketNumber || !solution) {
+      return res.status(400).json({ 
+        error: 'ticketNumber and solution are required' 
+      });
+    }
+    
+    console.log('🔧 Manual knowledge base update requested:', ticketNumber);
+    
+    // Check if solution looks valid
+    if (!forceUpdate && !isSupportSolution(solution)) {
+      return res.status(400).json({ 
+        error: 'Solution does not appear to contain resolution information. Use forceUpdate=true to override.' 
+      });
+    }
+    
+    // Extract Q&A pair
+    const qaPair = await extractQAPair(ticketNumber, solution);
+    if (!qaPair) {
+      return res.status(400).json({ 
+        error: 'Could not extract Q&A pair from ticket and solution' 
+      });
+    }
+    
+    // Update knowledge base
+    const success = await updateKnowledgeBase(qaPair);
+    if (!success) {
+      return res.status(500).json({ 
+        error: 'Failed to update knowledge base file' 
+      });
+    }
+    
+    // Update ticket status
+    await supabase
+      .from('support_tickets')
+      .update({ 
+        status: 'resolved',
+        resolved_at: new Date().toISOString(),
+        resolution_notes: solution
+      })
+      .eq('ticket_number', ticketNumber);
+    
+    res.json({
+      success: true,
+      message: 'Knowledge base updated successfully',
+      qaPair: qaPair
+    });
+    
+  } catch (error) {
+    console.error('❌ Manual knowledge base update error:', error);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: error.message 
+    });
+  }
+});
+
+// Test knowledge base update with sample data
+app.post('/test-knowledge-update', async (req, res) => {
+  try {
+    console.log('🧪 Testing knowledge base update...');
+    
+    const testSolution = `Solution: The user needs to clear their browser cache and cookies.
+
+Steps to fix:
+1. Go to browser settings
+2. Clear browsing data
+3. Select "Cookies and other site data" and "Cached images and files"
+4. Click "Clear data"
+5. Refresh the page and try again
+
+This resolves the login issue in most cases.`;
+    
+    const mockTicket = {
+      ticket_number: 'TEST-' + Date.now(),
+      issue_title: 'Cannot login to PM-Next',
+      issue_description: 'User reports login page keeps loading but never completes',
+      issue_category: 'authentication',
+      steps_attempted: ['Tried different browser', 'Restarted computer']
+    };
+    
+    // Temporarily insert mock ticket
+    const { data: insertedTicket } = await supabase
+      .from('support_tickets')
+      .insert([{
+        ticket_number: mockTicket.ticket_number,
+        user_id: 'test_user',
+        chat_id: 'test_chat',
+        user_name: 'Test User',
+        issue_category: mockTicket.issue_category,
+        issue_title: mockTicket.issue_title,
+        issue_description: mockTicket.issue_description,
+        steps_attempted: mockTicket.steps_attempted,
+        urgency_level: 'low',
+        status: 'open'
+      }])
+      .select()
+      .single();
+    
+    if (!insertedTicket) {
+      return res.status(500).json({ error: 'Failed to create test ticket' });
+    }
+    
+    // Test the knowledge base update
+    const qaPair = await extractQAPair(mockTicket.ticket_number, testSolution);
+    if (!qaPair) {
+      return res.status(500).json({ error: 'Failed to extract Q&A pair' });
+    }
+    
+    const success = await updateKnowledgeBase(qaPair);
+    
+    // Clean up test ticket
+    await supabase
+      .from('support_tickets')
+      .delete()
+      .eq('ticket_number', mockTicket.ticket_number);
+    
+    if (success) {
+      res.json({
+        success: true,
+        message: 'Knowledge base test update successful',
+        testData: {
+          ticket: mockTicket,
+          solution: testSolution,
+          extractedQA: qaPair
+        }
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to update knowledge base' });
+    }
+    
+  } catch (error) {
+    console.error('❌ Test knowledge base update error:', error);
+    res.status(500).json({ 
+      error: 'Test failed',
+      message: error.message 
+    });
+  }
+});
+
+// Get knowledge base statistics
+app.get('/knowledge-stats', async (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    const knowledgeBasePath = path.join(__dirname, 'knowledge-base.md');
+    const knowledgeBase = fs.readFileSync(knowledgeBasePath, 'utf8');
+    
+    // Count Q&A pairs
+    const qaCount = (knowledgeBase.match(/### Q:/g) || []).length;
+    
+    // Count by category
+    const categories = {
+      candidate_management: (knowledgeBase.match(/candidate/gi) || []).length,
+      job_management: (knowledgeBase.match(/job/gi) || []).length,
+      client_management: (knowledgeBase.match(/client/gi) || []).length,
+      authentication: (knowledgeBase.match(/login|password|access/gi) || []).length,
+      system_performance: (knowledgeBase.match(/slow|performance|loading/gi) || []).length
+    };
+    
+    // Get resolved tickets count
+    const { data: resolvedTickets } = await supabase
+      .from('support_tickets')
+      .select('id, created_at, resolved_at')
+      .eq('status', 'resolved');
+    
+    const stats = {
+      totalQAs: qaCount,
+      fileSize: Math.round(knowledgeBase.length / 1024 * 100) / 100, // KB
+      lastModified: fs.statSync(knowledgeBasePath).mtime,
+      categories: categories,
+      resolvedTickets: resolvedTickets?.length || 0,
+      timestamp: new Date().toISOString()
+    };
+    
+    res.json(stats);
+    
+  } catch (error) {
+    console.error('❌ Knowledge stats error:', error);
+    res.status(500).json({ error: 'Failed to get knowledge base statistics' });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
@@ -1609,5 +1823,265 @@ async function createTicketFromData(chatId, data, category, originalMessage, sen
     console.error('❌ Error creating ticket from data:', error);
     console.error('❌ Error stack:', error.stack);
     return null;
+  }
+}
+
+// Knowledge Base Auto-Update Functions
+
+/**
+ * Detect if a message contains a support solution
+ */
+function isSupportSolution(message) {
+  const lowerMessage = message.toLowerCase();
+  
+  // Check for solution keywords
+  const hasSolutionKeyword = SOLUTION_KEYWORDS.some(keyword => 
+    lowerMessage.includes(keyword.toLowerCase())
+  );
+  
+  // Check for knowledge base update indicators
+  const hasKBIndicator = KNOWLEDGE_UPDATE_INDICATORS.some(indicator => 
+    lowerMessage.includes(indicator.toLowerCase())
+  );
+  
+  // Check for typical support response patterns
+  const supportPatterns = [
+    /here.*how.*to/i,
+    /follow.*these.*steps/i,
+    /you.*can.*fix.*this.*by/i,
+    /the.*problem.*is/i,
+    /to.*resolve.*this/i,
+    /issue.*caused.*by/i,
+    /workaround.*is/i,
+    /temporary.*fix/i
+  ];
+  
+  const hasPattern = supportPatterns.some(pattern => pattern.test(message));
+  
+  return hasSolutionKeyword || hasKBIndicator || hasPattern;
+}
+
+/**
+ * Extract ticket number from message context
+ */
+function extractTicketNumber(message) {
+  const ticketPattern = /(?:ticket|pmn-)\s*[:#-]\s*([A-Z]{2,3}-\d{8}-\d{4})/i;
+  const match = message.match(ticketPattern);
+  return match ? match[1] : null;
+}
+
+/**
+ * Extract Q&A pair from ticket and solution
+ */
+async function extractQAPair(ticketNumber, solutionMessage) {
+  try {
+    // Get ticket details from database
+    const { data: ticket, error } = await supabase
+      .from('support_tickets')
+      .select('*')
+      .eq('ticket_number', ticketNumber)
+      .single();
+    
+    if (error || !ticket) {
+      console.log('❌ Could not fetch ticket for knowledge base update:', ticketNumber);
+      return null;
+    }
+    
+    // Use AI to extract and format the Q&A pair
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a knowledge base curator. Extract a clear question and answer from a support ticket and its solution.
+
+Format the response as JSON:
+{
+  "question": "Clear, general question that future users might ask",
+  "answer": "Step-by-step solution that can help similar issues",
+  "category": "One of: candidate_management, job_management, client_management, pipeline_management, authentication, system_performance, general"
+}
+
+Make the question generic enough to match similar future issues, but specific enough to be useful.
+Make the answer comprehensive with clear steps.`
+        },
+        {
+          role: 'user',
+          content: `Support Ticket:
+Title: ${ticket.issue_title}
+Description: ${ticket.issue_description}
+Category: ${ticket.issue_category}
+Steps Attempted: ${ticket.steps_attempted?.join(', ') || 'None'}
+
+Solution Provided:
+${solutionMessage}
+
+Extract a Q&A pair from this support interaction.`
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 500
+    });
+    
+    const response = completion.choices[0].message.content;
+    console.log('🤖 AI extracted Q&A:', response);
+    
+    try {
+      return JSON.parse(response);
+    } catch (parseError) {
+      console.log('⚠️ Could not parse AI response as JSON, using fallback');
+      return {
+        question: ticket.issue_title,
+        answer: solutionMessage,
+        category: ticket.issue_category || 'general'
+      };
+    }
+    
+  } catch (error) {
+    console.error('❌ Error extracting Q&A pair:', error);
+    return null;
+  }
+}
+
+/**
+ * Update knowledge base with new Q&A
+ */
+async function updateKnowledgeBase(qaPair) {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    const knowledgeBasePath = path.join(__dirname, 'knowledge-base.md');
+    let knowledgeBase = fs.readFileSync(knowledgeBasePath, 'utf8');
+    
+    // Determine where to insert the new Q&A based on category
+    const categoryHeaders = {
+      'candidate_management': '### Q: How do I add a new candidate?',
+      'job_management': '### Q: How do I create a job posting?',
+      'client_management': '### Q: How do I track a deal in the pipeline?',
+      'authentication': '## Troubleshooting Common Issues',
+      'system_performance': '## Troubleshooting Common Issues',
+      'general': '## Common User Questions and Answers'
+    };
+    
+    const category = qaPair.category || 'general';
+    const insertAfterHeader = categoryHeaders[category] || categoryHeaders['general'];
+    
+    // Format the new Q&A entry
+    const newEntry = `
+### Q: ${qaPair.question}
+**A**: ${qaPair.answer}
+`;
+    
+    // Find insertion point
+    const headerIndex = knowledgeBase.indexOf(insertAfterHeader);
+    if (headerIndex === -1) {
+      // If header not found, append to end of Common Questions section
+      const commonQuestionsIndex = knowledgeBase.indexOf('## Common User Questions and Answers');
+      if (commonQuestionsIndex !== -1) {
+        const nextSectionIndex = knowledgeBase.indexOf('## ', commonQuestionsIndex + 1);
+        const insertIndex = nextSectionIndex !== -1 ? nextSectionIndex : knowledgeBase.length;
+        knowledgeBase = knowledgeBase.slice(0, insertIndex) + newEntry + '\n' + knowledgeBase.slice(insertIndex);
+      } else {
+        // If no Common Questions section, append to end
+        knowledgeBase += newEntry;
+      }
+    } else {
+      // Find the end of the current Q&A entry
+      const nextQIndex = knowledgeBase.indexOf('\n### Q:', headerIndex + 1);
+      const nextSectionIndex = knowledgeBase.indexOf('\n## ', headerIndex + 1);
+      
+      let insertIndex;
+      if (nextQIndex !== -1 && (nextSectionIndex === -1 || nextQIndex < nextSectionIndex)) {
+        insertIndex = nextQIndex;
+      } else if (nextSectionIndex !== -1) {
+        insertIndex = nextSectionIndex;
+      } else {
+        insertIndex = knowledgeBase.length;
+      }
+      
+      knowledgeBase = knowledgeBase.slice(0, insertIndex) + newEntry + knowledgeBase.slice(insertIndex);
+    }
+    
+    // Write updated knowledge base
+    fs.writeFileSync(knowledgeBasePath, knowledgeBase);
+    console.log('📚 Knowledge base updated with new Q&A:', qaPair.question);
+    
+    // Update the loaded knowledge base in memory
+    global.PM_NEXT_KNOWLEDGE = knowledgeBase;
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error updating knowledge base:', error);
+    return false;
+  }
+}
+
+/**
+ * Process support solution for knowledge base update
+ */
+async function processSupportSolution(message, chatId, senderId) {
+  try {
+    console.log('🔍 Processing potential support solution...');
+    
+    // Check if this is from the support group
+    if (chatId !== process.env.LARK_SUPPORT_GROUP_ID) {
+      return false; // Only process messages from support group
+    }
+    
+    // Check if message contains a solution
+    if (!isSupportSolution(message)) {
+      return false;
+    }
+    
+    console.log('✅ Support solution detected, extracting ticket info...');
+    
+    // Extract ticket number from message
+    const ticketNumber = extractTicketNumber(message);
+    if (!ticketNumber) {
+      console.log('⚠️ No ticket number found in solution message');
+      return false;
+    }
+    
+    console.log('🎫 Found ticket number:', ticketNumber);
+    
+    // Extract Q&A pair
+    const qaPair = await extractQAPair(ticketNumber, message);
+    if (!qaPair) {
+      console.log('❌ Could not extract Q&A pair');
+      return false;
+    }
+    
+    console.log('📝 Extracted Q&A pair:', qaPair);
+    
+    // Update knowledge base
+    const success = await updateKnowledgeBase(qaPair);
+    if (success) {
+      // Update ticket status to resolved
+      await supabase
+        .from('support_tickets')
+        .update({ 
+          status: 'resolved',
+          resolved_at: new Date().toISOString(),
+          resolution_notes: message
+        })
+        .eq('ticket_number', ticketNumber);
+      
+      // Send confirmation to support group
+      await sendMessage(chatId, `✅ **Knowledge Base Updated**
+
+**Ticket**: ${ticketNumber}
+**New Q&A Added**: ${qaPair.question}
+**Category**: ${qaPair.category}
+
+This solution has been added to the knowledge base and will help answer similar questions automatically in the future. 🤖📚`);
+      
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('❌ Error processing support solution:', error);
+    return false;
   }
 } 

@@ -10,6 +10,40 @@ A smart Lark bot that helps users navigate and understand the PM-Next Recruitmen
 - 🔄 **Real-time Responses**: Instant replies to user queries
 - 🛡️ **Secure**: Proper authentication and error handling
 
+## 🚀 Key Features
+
+- 🤖 **Intelligent Support Bot**: AI-powered responses using GPT-4
+- 🎫 **Automated Ticket Creation**: Seamless support request handling
+- 📚 **Comprehensive Knowledge Base**: Pre-loaded with PM-Next application knowledge
+- 📈 **Performance Analytics**: Request tracking and response optimization
+- 🔄 **Context-Aware Conversations**: Maintains conversation history
+- ⚡ **Response Caching**: Optimized performance for common questions
+- 🎯 **Smart Escalation**: Automatic ticket creation when AI can't help
+- 🧠 **Self-Improving Knowledge Base**: Automatically updates from resolved tickets
+
+### 🔄 Auto-Updating Knowledge Base
+
+The system now automatically learns from support interactions:
+
+**How it works:**
+1. When support team members reply to tickets with solutions, the system detects solution keywords
+2. AI extracts a clean Q&A pair from the original ticket and solution
+3. The knowledge base is automatically updated with the new information
+4. Future similar questions will be answered automatically without creating tickets
+
+**Triggering automatic updates:**
+Reply to support tickets using phrases like:
+- "Solution: [your solution]"
+- "Fix: [steps to resolve]" 
+- "To resolve this: [solution]"
+- "Here's how to fix: [steps]"
+- Include "add to kb" or "for future reference" in your reply
+
+**Manual knowledge base updates:**
+- `POST /update-knowledge-base` - Manually add solutions to knowledge base
+- `POST /test-knowledge-update` - Test the update functionality
+- `GET /knowledge-stats` - View knowledge base statistics
+
 ## Quick Start
 
 ### 1. Prerequisites
