@@ -221,7 +221,32 @@ const openai = new OpenAI({
 // Load PM-Next Application Knowledge Base from markdown file
 const fs = require('fs');
 const path = require('path');
-const PM_NEXT_KNOWLEDGE = fs.readFileSync(path.join(__dirname, 'knowledge-base.md'), 'utf8');
+
+// Dynamic knowledge base loading
+let PM_NEXT_KNOWLEDGE = '';
+const KNOWLEDGE_BASE_PATH = path.join(__dirname, 'knowledge-base.md');
+
+function loadKnowledgeBase() {
+  try {
+    PM_NEXT_KNOWLEDGE = fs.readFileSync(KNOWLEDGE_BASE_PATH, 'utf8');
+    console.log('📚 Knowledge base loaded/reloaded');
+    return PM_NEXT_KNOWLEDGE;
+  } catch (error) {
+    console.error('❌ Error loading knowledge base:', error);
+    return PM_NEXT_KNOWLEDGE; // Return existing knowledge base if reload fails
+  }
+}
+
+// Initial load
+loadKnowledgeBase();
+
+// Watch for knowledge base file changes (optional - for development)
+if (process.env.NODE_ENV !== 'production') {
+  fs.watchFile(KNOWLEDGE_BASE_PATH, (curr, prev) => {
+    console.log('📝 Knowledge base file changed, reloading...');
+    loadKnowledgeBase();
+  });
+}
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -1301,6 +1326,43 @@ app.get('/knowledge-stats', async (req, res) => {
   }
 });
 
+// Reload knowledge base endpoint
+app.post('/reload-knowledge-base', (req, res) => {
+  try {
+    const oldLength = PM_NEXT_KNOWLEDGE.length;
+    loadKnowledgeBase();
+    const newLength = PM_NEXT_KNOWLEDGE.length;
+    
+    res.json({
+      success: true,
+      message: 'Knowledge base reloaded successfully',
+      stats: {
+        oldSize: Math.round(oldLength / 1024 * 100) / 100,
+        newSize: Math.round(newLength / 1024 * 100) / 100,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('❌ Knowledge base reload error:', error);
+    res.status(500).json({ error: 'Failed to reload knowledge base' });
+  }
+});
+
+// Get current loaded knowledge base content
+app.get('/current-knowledge-base', (req, res) => {
+  try {
+    res.json({
+      content: PM_NEXT_KNOWLEDGE,
+      size: Math.round(PM_NEXT_KNOWLEDGE.length / 1024 * 100) / 100,
+      qaCount: (PM_NEXT_KNOWLEDGE.match(/### Q:/g) || []).length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error getting current knowledge base:', error);
+    res.status(500).json({ error: 'Failed to get current knowledge base' });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
@@ -2007,8 +2069,8 @@ async function updateKnowledgeBase(qaPair) {
     fs.writeFileSync(knowledgeBasePath, knowledgeBase);
     console.log('📚 Knowledge base updated with new Q&A:', qaPair.question);
     
-    // Update the loaded knowledge base in memory
-    global.PM_NEXT_KNOWLEDGE = knowledgeBase;
+    // Reload the knowledge base in memory
+    loadKnowledgeBase();
     
     return true;
   } catch (error) {

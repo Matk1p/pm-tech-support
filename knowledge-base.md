@@ -121,6 +121,9 @@ Dashboard → Analytics provides comprehensive metrics including:
 5. Use filters to view specific deals
 6. Generate reports from the Reports section
 
+### Q: How do I add a new client in the client management system?
+**A**: 1. Navigate to the client page. 2. Click on 'Add Client'. 3. Fill in the required details. 4. Click 'Submit'.
+
 ## Navigation Quick Reference
 
 **Main Dashboard**: Central hub with overview widgets
