@@ -232,6 +232,7 @@ const path = require('path');
 
 // Dynamic knowledge base loading
 let PM_NEXT_KNOWLEDGE = '';
+let knowledgeBaseInitialized = false;
 const KNOWLEDGE_BASE_PATH = path.join(__dirname, 'knowledge-base.md');
 
 function loadKnowledgeBase() {
@@ -254,6 +255,23 @@ if (process.env.NODE_ENV !== 'production') {
     console.log('📝 Knowledge base file changed, reloading...');
     loadKnowledgeBase();
   });
+}
+
+// Validate environment variables first
+console.log('🔧 Environment variable check:');
+console.log('   - NODE_ENV:', process.env.NODE_ENV);
+console.log('   - VERCEL:', process.env.VERCEL);
+console.log('   - SUPABASE_URL exists:', !!process.env.SUPABASE_URL);
+console.log('   - SUPABASE_ANON_KEY exists:', !!process.env.SUPABASE_ANON_KEY);
+
+if (!process.env.SUPABASE_URL) {
+  console.error('❌ SUPABASE_URL environment variable is required but not set');
+  console.error('💡 Check your Vercel environment variables configuration');
+}
+
+if (!process.env.SUPABASE_ANON_KEY) {
+  console.error('❌ SUPABASE_ANON_KEY environment variable is required but not set');
+  console.error('💡 Check your Vercel environment variables configuration');
 }
 
 // Initialize Supabase client
@@ -282,6 +300,16 @@ async function initKnowledgeBase() {
     console.log('📚 Knowledge base table check:', error ? 'Using file fallback' : 'Database ready');
   } catch (error) {
     console.log('📚 Knowledge base: Using file-based fallback');
+  }
+}
+
+// Ensure knowledge base is initialized (lazy loading for serverless)
+async function ensureKnowledgeBaseInitialized() {
+  if (!knowledgeBaseInitialized) {
+    console.log('🔄 Initializing knowledge base (serverless lazy loading)...');
+    await initKnowledgeBase();
+    await loadKnowledgeBaseFromDB();
+    knowledgeBaseInitialized = true;
   }
 }
 
@@ -363,6 +391,7 @@ async function loadKnowledgeBaseFromDB() {
     }
     
     PM_NEXT_KNOWLEDGE = knowledgeBase;
+    knowledgeBaseInitialized = true; // Mark as initialized when successful
     return knowledgeBase;
     
   } catch (error) {
@@ -632,6 +661,9 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
   const startTime = Date.now();
   
   try {
+    // Ensure knowledge base is initialized for serverless environments
+    await ensureKnowledgeBaseInitialized();
+    
     console.log('🧠 Calling OpenAI with message:', userMessage);
     
     // Get or create conversation context
@@ -1089,6 +1121,17 @@ async function sendMessage(chatId, message) {
     console.error('📋 Error details:', error.message);
   }
 }
+
+// Environment check endpoint
+app.get('/env-check', (req, res) => {
+  res.json({
+    environment: process.env.NODE_ENV,
+    vercel: !!process.env.VERCEL,
+    supabaseUrl: !!process.env.SUPABASE_URL,
+    supabaseKey: !!process.env.SUPABASE_ANON_KEY,
+    supabaseUrlPrefix: process.env.SUPABASE_URL ? process.env.SUPABASE_URL.substring(0, 30) + '...' : 'NOT SET'
+  });
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -1715,7 +1758,8 @@ app.get('/knowledge-stats', async (req, res) => {
 app.post('/reload-knowledge-base', async (req, res) => {
   try {
     const oldLength = PM_NEXT_KNOWLEDGE.length;
-    await loadKnowledgeBaseFromDB(); // Use the hybrid approach
+    knowledgeBaseInitialized = false; // Force re-initialization
+    await ensureKnowledgeBaseInitialized(); // Use the serverless-safe approach
     const newLength = PM_NEXT_KNOWLEDGE.length;
     
     res.json({
@@ -1754,13 +1798,18 @@ app.listen(PORT, async () => {
   console.log(`📝 Health check: http://localhost:${PORT}/health`);
   
   // Initialize knowledge base (static file + dynamic database entries)
-  try {
-    await initKnowledgeBase();
-    await loadKnowledgeBaseFromDB();
-    console.log(`🗄️ Hybrid knowledge base initialized (static + dynamic content)`);
-  } catch (error) {
-    console.error('⚠️ Knowledge base initialization failed:', error.message);
-    console.log('🔄 Using static file-based knowledge base only');
+  // Note: In serverless environments like Vercel, this won't run
+  // Knowledge base will be initialized lazily on first request
+  if (!process.env.VERCEL) {
+    try {
+      await ensureKnowledgeBaseInitialized();
+      console.log(`🗄️ Hybrid knowledge base initialized (static + dynamic content)`);
+    } catch (error) {
+      console.error('⚠️ Knowledge base initialization failed:', error.message);
+      console.log('🔄 Using static file-based knowledge base only');
+    }
+  } else {
+    console.log('🚀 Serverless environment detected - knowledge base will initialize on first request');
   }
 });
 
