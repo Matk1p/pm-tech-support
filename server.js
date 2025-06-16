@@ -38,7 +38,7 @@ const ticketCollectionState = new Map(); // Track users in ticket creation flow
 
 // Knowledge base auto-update system
 const SOLUTION_KEYWORDS = [
-  'solution:', 'fix:', 'resolved:', 'answer:', 'steps to fix:', 'how to fix:',
+  'solution:', 'solution for', 'fix:', 'resolved:', 'answer:', 'steps to fix:', 'how to fix:',
   'to resolve this:', 'the issue is:', 'you need to:', 'try this:',
   'fixed by:', 'solution is:', 'resolve by:', 'fix this by:',
   'here\'s the solution:', 'here is how to fix:', 'problem solved:'
@@ -2038,7 +2038,8 @@ function isSupportSolution(message) {
  * Extract ticket number from message context
  */
 function extractTicketNumber(message) {
-  const ticketPattern = /(?:ticket|pmn-)\s*[:#-]\s*([A-Z]{2,3}-\d{8}-\d{4})/i;
+  // Simplified pattern - just look for the ticket format anywhere in the message
+  const ticketPattern = /([A-Z]{2,3}-\d{8}-\d{4})/i;
   const match = message.match(ticketPattern);
   return match ? match[1] : null;
 }
