@@ -1470,7 +1470,10 @@ app.listen(PORT, async () => {
   console.log(`📝 Health check: http://localhost:${PORT}/health`);
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
   
@@ -1484,6 +1487,9 @@ app.listen(PORT, async () => {
     console.log('🔄 Using file-based knowledge base as fallback');
   }
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
