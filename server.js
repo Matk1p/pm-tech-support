@@ -47,7 +47,7 @@ const SOLUTION_KEYWORDS = [
 
 // Relaxed detection - these indicate actionable solutions
 const SOLUTION_INDICATORS = [
-  'refresh', 'clear cache', 'restart', 'reload', 'try again', 'check',
+  'refresh', 'clear cache', 'restart', 'reload', 'try again', 'try', 'check',
   'update', 'install', 'uninstall', 'contact', 'go to', 'click',
   'navigate to', 'open', 'close', 'enable', 'disable', 'settings'
 ];
@@ -495,6 +495,7 @@ async function handleMessage(event) {
     }
 
     // Check if the bot was mentioned or if it's a direct message
+    
     const isMentioned = mentions && mentions.some(mention => 
       mention.key === process.env.LARK_APP_ID || 
       mention.name === 'Ask Danish' ||
@@ -552,7 +553,9 @@ async function handleMessage(event) {
     }
 
     // Check if this is a support solution for knowledge base update
+    console.log('🔍 Checking if message is a support solution...');
     const solutionProcessed = await processSupportSolution(userMessage, chat_id, sender_id, event);
+    console.log('📊 Solution processing result:', solutionProcessed);
     
     if (!solutionProcessed) {
       console.log('🤖 Generating AI response...');
@@ -566,6 +569,7 @@ async function handleMessage(event) {
       console.log('🎉 Message sent successfully!');
     } else {
       console.log('📚 Support solution processed, knowledge base updated!');
+      console.log('🚫 Skipping AI response generation since solution was processed');
     }
     
   } catch (error) {
@@ -1052,6 +1056,7 @@ app.post('/test-db-connection', async (req, res) => {
     
     // Test Supabase connection
     const { data: testData, error: testError } = await supabase
+      .schema('support')
       .from('support_tickets')
       .select('count')
       .limit(1);
@@ -1191,6 +1196,7 @@ app.get('/tickets', async (req, res) => {
     const { status = 'open', limit = 50 } = req.query;
     
     let query = supabase
+      .schema('support')
       .from('support_tickets')
       .select('*')
       .order('created_at', { ascending: false })
@@ -1221,6 +1227,7 @@ app.get('/tickets/:ticketNumber', async (req, res) => {
     const { ticketNumber } = req.params;
     
     const { data, error } = await supabase
+      .schema('support')
       .from('support_tickets')
       .select('*')
       .eq('ticket_number', ticketNumber)
@@ -1247,6 +1254,7 @@ app.patch('/tickets/:ticketNumber', async (req, res) => {
     }
     
     const { data, error } = await supabase
+      .schema('support')
       .from('support_tickets')
       .update(updates)
       .eq('ticket_number', ticketNumber)
@@ -1357,6 +1365,108 @@ app.post('/test-ticket', async (req, res) => {
   }
 });
 
+// Test solution processing endpoint
+app.post('/test-solution-processing', async (req, res) => {
+  try {
+    console.log('🧪 Testing solution processing...');
+    
+    const { chatId, solutionMessage, createTestTicket = true } = req.body;
+    
+    if (!solutionMessage) {
+      return res.status(400).json({ 
+        error: 'solutionMessage is required' 
+      });
+    }
+    
+    let testChatId = chatId || 'test_chat_' + Date.now();
+    let testTicketNumber = null;
+    
+    // Create a test ticket if requested
+    if (createTestTicket) {
+      const testTicketData = {
+        user_id: 'test_user_solution_' + Date.now(),
+        chat_id: testChatId,
+        user_name: 'Test User - Solution Processing',
+        issue_category: 'authentication',
+        issue_title: 'Test login issue for solution processing',
+        issue_description: 'This is a test ticket to verify solution processing works correctly.',
+        steps_attempted: ['Tried different browser', 'Cleared cache'],
+        browser_info: 'Chrome',
+        device_info: 'MacBook',
+        urgency_level: 'medium',
+        status: 'open',
+        conversation_context: {
+          test: true,
+          purpose: 'solution_processing_test'
+        }
+      };
+      
+      const ticket = await createSupportTicket(testTicketData);
+      if (!ticket) {
+        return res.status(500).json({ 
+          error: 'Failed to create test ticket for solution processing test' 
+        });
+      }
+      
+      testTicketNumber = ticket.ticket_number;
+      console.log('✅ Test ticket created:', testTicketNumber);
+    }
+    
+    // Create a mock event that simulates a reply
+    const mockEvent = {
+      message: {
+        chat_id: testChatId,
+        parent_id: 'mock_parent_id',
+        content: JSON.stringify({ text: solutionMessage })
+      }
+    };
+    
+    // Test solution processing
+    console.log('🔍 Testing solution processing with message:', solutionMessage.substring(0, 100) + '...');
+    
+    const result = await processSupportSolution(
+      solutionMessage, 
+      testChatId, 
+      { id: 'test_sender_id' }, 
+      mockEvent
+    );
+    
+    // Clean up test ticket if we created one
+    if (testTicketNumber) {
+      try {
+        await supabase
+          .schema('support')
+          .from('support_tickets')
+          .delete()
+          .eq('ticket_number', testTicketNumber);
+        console.log('🧹 Test ticket cleaned up');
+      } catch (cleanupError) {
+        console.log('⚠️ Failed to cleanup test ticket:', cleanupError.message);
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: 'Solution processing test completed',
+      results: {
+        solutionProcessed: result,
+        testTicketCreated: createTestTicket,
+        testTicketNumber: testTicketNumber,
+        testChatId: testChatId,
+        messageLength: solutionMessage.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Test solution processing error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Test failed',
+      message: error.message 
+    });
+  }
+});
+
 // Knowledge Base Update Endpoints
 
 // Manually trigger knowledge base update from ticket solution
@@ -1397,6 +1507,7 @@ app.post('/update-knowledge-base', async (req, res) => {
     
     // Update ticket status
     await supabase
+      .schema('support')
       .from('support_tickets')
       .update({ 
         status: 'resolved',
@@ -1446,6 +1557,7 @@ This resolves the login issue in most cases.`;
     
     // Temporarily insert mock ticket
     const { data: insertedTicket } = await supabase
+      .schema('support')
       .from('support_tickets')
       .insert([{
         ticket_number: mockTicket.ticket_number,
@@ -1476,6 +1588,7 @@ This resolves the login issue in most cases.`;
     
     // Clean up test ticket
     await supabase
+      .schema('support')
       .from('support_tickets')
       .delete()
       .eq('ticket_number', mockTicket.ticket_number);
@@ -1526,6 +1639,7 @@ app.get('/knowledge-stats', async (req, res) => {
     
     // Get resolved tickets count
     const { data: resolvedTickets } = await supabase
+      .schema('support')
       .from('support_tickets')
       .select('id, created_at, resolved_at')
       .eq('status', 'resolved');
@@ -1629,6 +1743,7 @@ async function createSupportTicket(ticketData) {
     console.log('🔑 Supabase key configured:', !!process.env.SUPABASE_ANON_KEY);
     
     const { data, error } = await supabase
+      .schema('support')
       .from('support_tickets')
       .insert([ticketData])
       .select()
@@ -2127,19 +2242,16 @@ async function createTicketFromData(chatId, data, category, originalMessage, sen
 function isSupportSolution(message, isReplyToTicket = false) {
   const lowerMessage = message.toLowerCase();
   
-  // If this is a reply to a support ticket, be much more lenient
+  // If this is a reply to a support ticket, treat any substantive reply as a solution
   if (isReplyToTicket) {
-    // Any substantive reply to a ticket could be a solution
-    // Check for actionable content (minimum 10 characters, contains action words)
-    if (message.length >= 10) {
-      const hasActionableContent = SOLUTION_INDICATORS.some(indicator => 
-        lowerMessage.includes(indicator.toLowerCase())
-      );
-      if (hasActionableContent) return true;
+    // Any reply to a support ticket with reasonable length is considered a solution
+    if (message.trim().length >= 5) {
+      console.log('✅ Treating reply to support ticket as solution');
+      return true;
     }
   }
   
-  // Check for explicit solution keywords
+  // For non-reply messages, check for explicit solution keywords
   const hasSolutionKeyword = SOLUTION_KEYWORDS.some(keyword => 
     lowerMessage.includes(keyword.toLowerCase())
   );
@@ -2149,7 +2261,7 @@ function isSupportSolution(message, isReplyToTicket = false) {
     lowerMessage.includes(indicator.toLowerCase())
   );
   
-  // Check for typical support response patterns
+  // Check for typical support response patterns - EXPANDED
   const supportPatterns = [
     /here.*how.*to/i,
     /follow.*these.*steps/i,
@@ -2161,12 +2273,89 @@ function isSupportSolution(message, isReplyToTicket = false) {
     /temporary.*fix/i,
     /first.*try/i,
     /next.*step/i,
-    /should.*work/i
+    /should.*work/i,
+    /test.*this/i,
+    /try.*this/i,
+    /check.*if/i,
+    /refresh.*the/i,
+    /clear.*cache/i,
+    /restart.*browser/i,
+    /incognito.*window/i,
+    /private.*window/i,
+    /disable.*extensions/i
   ];
   
   const hasPattern = supportPatterns.some(pattern => pattern.test(message));
   
   return hasSolutionKeyword || hasKBIndicator || hasPattern;
+}
+
+/**
+ * Get parent message content from Lark API
+ */
+async function getParentMessageContent(messageId) {
+  try {
+    console.log('🔍 Attempting to fetch parent message:', messageId);
+    
+    // Get access token
+    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET
+      })
+    });
+
+    const tokenData = await tokenResponse.json();
+    
+    if (tokenData.code !== 0) {
+      console.log('❌ Failed to get access token for parent message:', tokenData.msg);
+      return null;
+    }
+
+    const accessToken = tokenData.tenant_access_token;
+
+    // Get the parent message content
+    const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages/${messageId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const messageData = await messageResponse.json();
+    console.log('📧 Parent message API response:', messageData);
+    
+    if (messageData.code === 0 && messageData.data && messageData.data.items && messageData.data.items.length > 0) {
+      const content = messageData.data.items[0].body.content;
+      console.log('📄 Parent message content:', content);
+      
+      // Try to parse content if it's JSON
+      try {
+        const parsedContent = JSON.parse(content);
+        if (parsedContent.text) {
+          console.log('📝 Extracted text from parent message:', parsedContent.text);
+          return parsedContent.text;
+        }
+      } catch (parseError) {
+        // Content might already be plain text
+        console.log('📄 Using content as plain text');
+        return content;
+      }
+      
+      return content;
+    } else {
+      console.log('❌ Failed to get parent message:', messageData.msg);
+      return null;
+    }
+  } catch (error) {
+    console.log('❌ Error fetching parent message:', error.message);
+    return null;
+  }
 }
 
 /**
@@ -2177,6 +2366,7 @@ async function extractTicketNumber(message, event = null) {
   const ticketPattern = /([A-Z]{2,3}-\d{8}-\d{4})/i;
   const directMatch = message.match(ticketPattern);
   if (directMatch) {
+    console.log('✅ Found ticket number directly in message:', directMatch[1]);
     return directMatch[1];
   }
   
@@ -2187,20 +2377,32 @@ async function extractTicketNumber(message, event = null) {
     const messageContent = JSON.stringify(event.message);
     const contextMatch = messageContent.match(ticketPattern);
     if (contextMatch) {
+      console.log('✅ Found ticket number in message context:', contextMatch[1]);
       return contextMatch[1];
     }
     
     // If this message has parent_id or root_id, it's a reply
-    // Check if we can find the ticket from recent conversations
     if (event.message.parent_id || event.message.root_id) {
       console.log('🧵 Detected reply message - searching for ticket in conversation context');
       
-      // For now, let's check if we have any recent tickets from this chat
-      // TODO: In future, we could query Lark API to get the parent message content
-      const chatId = event.message.chat_id;
+      // Try to get the parent message content from Lark API
+      const parentMessageId = event.message.parent_id || event.message.root_id;
+      console.log('📧 Parent message ID:', parentMessageId);
       
-             // Try to find the most recent ticket from this chat by searching recent database entries
-       return await findRecentTicketFromChat(chatId);
+      const parentContent = await getParentMessageContent(parentMessageId);
+      if (parentContent) {
+        console.log('📄 Retrieved parent message content:', parentContent);
+        const parentMatch = parentContent.match(ticketPattern);
+        if (parentMatch) {
+          console.log('✅ Found ticket number in parent message:', parentMatch[1]);
+          return parentMatch[1];
+        }
+      }
+      
+      // If we still can't find the ticket in parent content, try database search
+      const chatId = event.message.chat_id;
+      console.log('🔍 Searching database for recent tickets as fallback...');
+      return await findRecentTicketFromChat(chatId);
     }
   }
   
@@ -2208,21 +2410,27 @@ async function extractTicketNumber(message, event = null) {
 }
 
 /**
- * Find the most recent ticket from a specific chat
+ * Find the most recent ticket from a specific chat - IMPROVED
  */
 async function findRecentTicketFromChat(chatId) {
   try {
-    // Look for recent tickets created in this chat (last 24 hours)
-    const oneDayAgo = new Date();
-    oneDayAgo.setHours(oneDayAgo.getHours() - 24);
+    // Look for recent tickets created in this chat (extend to 7 days for better coverage)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    console.log('🔍 Searching for recent tickets in chat:', chatId);
+    console.log('🕐 Looking for tickets since:', sevenDaysAgo.toISOString());
     
     const { data: recentTickets, error } = await supabase
+      .schema('support')
       .from('support_tickets')
-      .select('ticket_number')
+      .select('ticket_number, created_at, issue_title')
       .eq('chat_id', chatId)
-      .gte('created_at', oneDayAgo.toISOString())
+      .gte('created_at', sevenDaysAgo.toISOString())
       .order('created_at', { ascending: false })
-      .limit(1);
+      .limit(5); // Get more tickets to choose from
+    
+    console.log('📊 Query result:', { recentTickets, error });
     
     if (error) {
       console.log('⚠️ Error searching for recent tickets:', error.message);
@@ -2232,9 +2440,21 @@ async function findRecentTicketFromChat(chatId) {
     if (recentTickets && recentTickets.length > 0) {
       const ticketNumber = recentTickets[0].ticket_number;
       console.log('🎫 Found recent ticket from this chat:', ticketNumber);
+      console.log('📋 Ticket details:', recentTickets[0]);
+      
+      // Log all found tickets for debugging
+      if (recentTickets.length > 1) {
+        console.log('📝 All recent tickets found:', recentTickets.map(t => ({
+          ticket: t.ticket_number,
+          created: t.created_at,
+          title: t.issue_title
+        })));
+      }
+      
       return ticketNumber;
     }
     
+    console.log('❌ No recent tickets found in this chat');
     return null;
   } catch (error) {
     console.log('⚠️ Exception searching for recent tickets:', error.message);
@@ -2271,11 +2491,16 @@ function isReplyToSupportTicket(message, event = null) {
 async function extractQAPair(ticketNumber, solutionMessage) {
   try {
     // Get ticket details from database
+    console.log('📋 Fetching ticket details for:', ticketNumber);
+    
     const { data: ticket, error } = await supabase
+      .schema('support')
       .from('support_tickets')
       .select('*')
       .eq('ticket_number', ticketNumber)
       .single();
+    
+    console.log('🎫 Ticket fetch result:', { ticket: ticket?.ticket_number, error });
     
     if (error || !ticket) {
       console.log('❌ Could not fetch ticket for knowledge base update:', ticketNumber);
@@ -2418,28 +2643,58 @@ async function updateKnowledgeBase(qaPair) {
 async function processSupportSolution(message, chatId, senderId, event = null) {
   try {
     console.log('🔍 Processing potential support solution...');
+    console.log('📝 Message content:', message);
+    console.log('💬 Chat ID:', chatId);
+    console.log('🆔 Sender ID:', senderId);
+    console.log('🎯 Has event:', !!event);
+    console.log('🧵 Has parent_id:', !!(event?.message?.parent_id));
+    console.log('🧵 Has root_id:', !!(event?.message?.root_id));
+    console.log('⚙️ LARK_SUPPORT_GROUP_ID:', process.env.LARK_SUPPORT_GROUP_ID || 'Not set');
+    console.log('⚙️ STRICT_SUPPORT_GROUP_ONLY:', process.env.STRICT_SUPPORT_GROUP_ONLY || 'Not set (defaults to false)');
     
     // Check if this is a reply to a support ticket
     const isReply = isReplyToSupportTicket(message, event);
+    console.log('🔄 Is reply to support ticket:', isReply);
     
     // Check if message contains a solution (use flexible detection)
-    if (!isSupportSolution(message, isReply)) {
+    const isSolution = isSupportSolution(message, isReply);
+    console.log('✨ Is detected as solution:', isSolution);
+    
+    if (!isSolution) {
       console.log('❌ Not detected as a support solution');
       return false;
     }
     
     // Check if this is from the configured support group (if set)
-    if (process.env.LARK_SUPPORT_GROUP_ID && chatId !== process.env.LARK_SUPPORT_GROUP_ID) {
+    // Allow testing in any chat by checking if STRICT_SUPPORT_GROUP_ONLY is enabled
+    const strictGroupOnly = process.env.STRICT_SUPPORT_GROUP_ONLY === 'true';
+    if (strictGroupOnly && process.env.LARK_SUPPORT_GROUP_ID && chatId !== process.env.LARK_SUPPORT_GROUP_ID) {
       console.log('⚠️ Solution detected but not from configured support group');
+      console.log('💡 Current chat:', chatId);
+      console.log('💡 Support group:', process.env.LARK_SUPPORT_GROUP_ID);
+      console.log('💡 Set STRICT_SUPPORT_GROUP_ONLY=false to allow testing in any chat');
       return false;
     }
     
     console.log('✅ Support solution detected, extracting ticket info...');
     
     // Extract ticket number from message or context
+    console.log('🔍 Attempting to extract ticket number from:', {
+      message: message.substring(0, 100) + '...',
+      hasEvent: !!event,
+      hasParentId: !!(event?.message?.parent_id),
+      hasRootId: !!(event?.message?.root_id),
+      chatId: event?.message?.chat_id
+    });
+    
     const ticketNumber = await extractTicketNumber(message, event);
     if (!ticketNumber) {
       console.log('⚠️ No ticket number found in solution message or context');
+      console.log('💡 This could be because:');
+      console.log('   - The message is not actually a reply to a support ticket');
+      console.log('   - The original ticket message is older than 7 days');
+      console.log('   - The ticket was created in a different chat');
+      console.log('   - The parent message could not be retrieved from Lark API');
       return false;
     }
     
@@ -2459,6 +2714,7 @@ async function processSupportSolution(message, chatId, senderId, event = null) {
     if (success) {
       // Update ticket status to resolved
       await supabase
+        .schema('support')
         .from('support_tickets')
         .update({ 
           status: 'resolved',
@@ -2467,14 +2723,17 @@ async function processSupportSolution(message, chatId, senderId, event = null) {
         })
         .eq('ticket_number', ticketNumber);
       
-      // Send confirmation to support group
-      await sendMessage(chatId, `✅ **Knowledge Base Updated**
+      // Send confirmation message
+      const confirmationMessage = `✅ **Knowledge Base Updated**
 
 **Ticket**: ${ticketNumber}
-**New Q&A Added**: ${qaPair.question}
+**Solution Recorded**: ${qaPair.question}
 **Category**: ${qaPair.category}
 
-This solution has been added to the knowledge base and will help answer similar questions automatically in the future. 🤖📚`);
+Your solution has been saved to the knowledge base and will help resolve similar issues automatically. Thank you! 🤖📚`;
+
+      console.log('📤 Sending knowledge base update confirmation...');
+      await sendMessage(chatId, confirmationMessage);
       
       return true;
     }
