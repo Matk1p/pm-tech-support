@@ -93,6 +93,7 @@
 6. Set job status to "Active"
 7. Click "Save" to publish
 
+
 ### Q: Where can I see the analytics?
 **A**:
 Dashboard → Analytics provides comprehensive metrics including:
