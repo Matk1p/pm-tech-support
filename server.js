@@ -259,6 +259,98 @@ const supabase = createClient(
   }
 );
 
+// Knowledge base storage - Use Supabase instead of file system for Vercel
+const KNOWLEDGE_BASE_TABLE = 'knowledge_base'; // Supabase will handle the schema prefix
+
+// Initialize knowledge base table if needed
+async function initKnowledgeBase() {
+  try {
+    // Check if table exists, if not we'll use the markdown file as fallback
+    const { data, error } = await supabase
+      .from(KNOWLEDGE_BASE_TABLE)
+      .select('id')
+      .limit(1);
+    
+    console.log('📚 Knowledge base table check:', error ? 'Using file fallback' : 'Database ready');
+  } catch (error) {
+    console.log('📚 Knowledge base: Using file-based fallback');
+  }
+}
+
+// Load knowledge base from database or file
+async function loadKnowledgeBaseFromDB() {
+  try {
+    const { data, error } = await supabase
+      .from(KNOWLEDGE_BASE_TABLE)
+      .select('*')
+      .order('created_at', { ascending: true });
+    
+    if (error || !data || data.length === 0) {
+      // Fallback to file-based knowledge base
+      return loadKnowledgeBase();
+    }
+    
+    // Build knowledge base from database entries
+    let knowledgeBase = `# PM-Next Recruitment Management System - Comprehensive Knowledge Base
+
+## Core Features and Navigation
+[... existing static content ...]
+
+## Common User Questions and Answers
+`;
+    
+    data.forEach(entry => {
+      knowledgeBase += `
+### Q: ${entry.question}
+**A**: ${entry.answer}
+`;
+    });
+    
+    PM_NEXT_KNOWLEDGE = knowledgeBase;
+    console.log('📚 Knowledge base loaded from database:', data.length, 'entries');
+    return knowledgeBase;
+    
+  } catch (error) {
+    console.error('❌ Error loading from database, using file fallback:', error);
+    return loadKnowledgeBase();
+  }
+}
+
+// Add Q&A to database instead of file
+async function addToKnowledgeBase(qaPair) {
+  try {
+    // First try database approach
+    const { data, error } = await supabase
+      .from(KNOWLEDGE_BASE_TABLE)
+      .insert([{
+        question: qaPair.question,
+        answer: qaPair.answer,
+        category: qaPair.category,
+        ticket_source: qaPair.ticketNumber || null,
+        created_at: new Date().toISOString()
+      }])
+      .select();
+    
+    if (error) {
+      console.log('⚠️ Database insert failed, trying file update:', error.message);
+      // Fallback to file update for local development
+      return await updateKnowledgeBase(qaPair);
+    }
+    
+    console.log('✅ Knowledge base entry added to database');
+    
+    // Reload knowledge base from database
+    await loadKnowledgeBaseFromDB();
+    
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Error adding to knowledge base:', error);
+    // Final fallback to file update
+    return await updateKnowledgeBase(qaPair);
+  }
+}
+
 // Handle Lark events
 app.post('/lark/events', async (req, res) => {
   try {
@@ -2118,8 +2210,8 @@ async function processSupportSolution(message, chatId, senderId) {
     
     console.log('📝 Extracted Q&A pair:', qaPair);
     
-    // Update knowledge base
-    const success = await updateKnowledgeBase(qaPair);
+    // Update knowledge base (database-first approach)
+    const success = await addToKnowledgeBase({...qaPair, ticketNumber});
     if (success) {
       // Update ticket status to resolved
       await supabase

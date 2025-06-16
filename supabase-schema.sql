@@ -24,11 +24,31 @@ CREATE TABLE support_tickets (
   tags TEXT[] -- For categorization and search
 );
 
+-- Knowledge Base Table for auto-updating Q&A pairs
+CREATE TABLE knowledge_base (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  category VARCHAR(50), -- 'candidate_management', 'job_management', etc.
+  ticket_source VARCHAR(20), -- Reference to originating ticket
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  is_active BOOLEAN DEFAULT true, -- Allow disabling entries
+  usage_count INTEGER DEFAULT 0, -- Track how often this Q&A is used
+  last_accessed TIMESTAMP WITH TIME ZONE
+);
+
 -- Indexes for performance
 CREATE INDEX idx_support_tickets_status ON support_tickets(status);
 CREATE INDEX idx_support_tickets_user_id ON support_tickets(user_id);
 CREATE INDEX idx_support_tickets_created_at ON support_tickets(created_at);
 CREATE INDEX idx_support_tickets_urgency ON support_tickets(urgency_level);
+
+-- Knowledge base indexes
+CREATE INDEX idx_knowledge_base_category ON knowledge_base(category);
+CREATE INDEX idx_knowledge_base_active ON knowledge_base(is_active);
+CREATE INDEX idx_knowledge_base_created ON knowledge_base(created_at);
+CREATE INDEX idx_knowledge_base_usage ON knowledge_base(usage_count DESC);
 
 -- Auto-update timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -41,6 +61,10 @@ $$ language 'plpgsql';
 
 CREATE TRIGGER update_support_tickets_updated_at 
     BEFORE UPDATE ON support_tickets 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_knowledge_base_updated_at 
+    BEFORE UPDATE ON knowledge_base 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Generate ticket numbers
