@@ -311,7 +311,8 @@ async function handleMessage(event) {
     console.log('  - Chat ID:', chat_id);
     console.log('  - Message ID:', message_id);
     console.log('  - Sender Type:', sender_type);
-    console.log('  - Sender ID:', sender_id);
+    console.log('  - Sender ID:', JSON.stringify(sender_id, null, 2));
+    console.log('  - Sender ID type:', typeof sender_id);
     console.log('  - Chat type:', event.message.chat_type);
     console.log('  - Content:', content);
     console.log('  - Mentions:', mentions);
@@ -648,8 +649,31 @@ If these don't resolve your issue, I can create a support ticket for you to get 
 async function getLarkUserInfo(userId) {
   try {
     console.log('👤 Fetching user info for:', userId);
+    console.log('👤 User ID type:', typeof userId, 'Value:', JSON.stringify(userId));
+    
+    // Extract the actual user ID from the sender object if needed
+    let actualUserId = userId;
+    if (typeof userId === 'object') {
+      // Try different ID properties in order of preference
+      actualUserId = userId.open_id || userId.user_id || userId.id;
+      console.log('👤 Extracted user ID from object:', actualUserId);
+      console.log('👤 Available IDs in object:', {
+        open_id: userId.open_id,
+        user_id: userId.user_id,
+        union_id: userId.union_id,
+        id: userId.id
+      });
+    }
+    
+    if (!actualUserId) {
+      console.error('❌ No valid user ID provided');
+      return null;
+    }
+    
+    console.log('👤 Using user ID for API call:', actualUserId);
     
     // Get access token first
+    console.log('🔑 Getting access token...');
     const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
       method: 'POST',
       headers: {
@@ -662,40 +686,85 @@ async function getLarkUserInfo(userId) {
     });
 
     const tokenData = await tokenResponse.json();
+    console.log('🔑 Token response:', tokenData);
+    
     if (tokenData.code !== 0) {
       console.error('❌ Failed to get access token:', tokenData.msg);
       return null;
     }
 
     const accessToken = tokenData.tenant_access_token;
+    console.log('✅ Access token obtained');
 
-    // Fetch user information
-    const userResponse = await fetch(`https://open.larksuite.com/open-apis/contact/v3/users/${userId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
+    // Determine the correct endpoint based on user ID format
+    let endpoint;
+    let userIdType;
+    
+    if (actualUserId.startsWith('ou_')) {
+      // This is an open_id
+      endpoint = `https://open.larksuite.com/open-apis/contact/v3/users/${actualUserId}?user_id_type=open_id`;
+      userIdType = 'open_id';
+    } else if (actualUserId.match(/^[a-f0-9]{8}$/)) {
+      // This looks like a user_id (8 hex characters)
+      endpoint = `https://open.larksuite.com/open-apis/contact/v3/users/${actualUserId}?user_id_type=user_id`;
+      userIdType = 'user_id';
+    } else {
+      // Default to treating as open_id
+      endpoint = `https://open.larksuite.com/open-apis/contact/v3/users/${actualUserId}?user_id_type=open_id`;
+      userIdType = 'open_id';
+    }
+    
+    console.log('🎯 Using endpoint:', endpoint);
+    console.log('🎯 User ID type determined:', userIdType);
+
+    try {
+      console.log('🔍 Calling Lark API:', endpoint);
+      
+      const userResponse = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const userData = await userResponse.json();
+      console.log('📊 User API response:', userData);
+      
+      if (userData.code === 0 && userData.data?.user) {
+        const userInfo = {
+          user_id: actualUserId,
+          name: userData.data.user.name || 'Unknown User',
+          email: userData.data.user.email || null,
+          mobile: userData.data.user.mobile || null,
+          avatar: userData.data.user.avatar?.avatar_240 || null
+        };
+
+        console.log('✅ User info fetched successfully:', userInfo);
+        return userInfo;
+      } else {
+        console.log('❌ API call failed:', 'Code:', userData.code, 'Message:', userData.msg);
       }
-    });
-
-    const userData = await userResponse.json();
-    if (userData.code !== 0) {
-      console.error('❌ Failed to get user info:', userData.msg);
-      return null;
+    } catch (apiError) {
+      console.log('❌ API call error:', apiError.message);
     }
 
-    const userInfo = {
-      user_id: userId,
-      name: userData.data.user?.name || 'Unknown User',
-      email: userData.data.user?.email || null,
-      mobile: userData.data.user?.mobile || null,
-      avatar: userData.data.user?.avatar?.avatar_240 || null
+    console.error('❌ API call failed for user ID:', actualUserId);
+    
+    // Try a simple fallback approach - return basic info with the user ID
+    console.log('🔄 Attempting fallback user info creation');
+    const userIdString = String(actualUserId);
+    return {
+      user_id: actualUserId,
+      name: userIdString.includes('ou_') ? 'Lark User (ID: ' + userIdString.substring(0, 10) + '...)' : 'Lark User',
+      email: null,
+      mobile: null,
+      avatar: null,
+      fallback: true
     };
-
-    console.log('✅ User info fetched successfully:', userInfo);
-    return userInfo;
   } catch (error) {
     console.error('❌ Error fetching user info:', error);
+    console.error('❌ Stack trace:', error.stack);
     return null;
   }
 }
@@ -795,6 +864,30 @@ app.get('/health', (req, res) => {
     service: 'PM-Next Lark Bot',
     timestamp: new Date().toISOString()
   });
+});
+
+// Test user info endpoint for debugging
+app.get('/test-user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    console.log('🧪 Testing user info fetch for:', userId);
+    
+    const userInfo = await getLarkUserInfo(userId);
+    
+    res.json({
+      success: !!userInfo,
+      userInfo: userInfo,
+      userId: userId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      userId: req.params.userId,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Analytics endpoint
@@ -1457,17 +1550,26 @@ async function createTicketFromData(chatId, data, category, originalMessage, sen
     let actualUserId = senderId?.id || `user_${chatId}`;
     let actualUserName = 'Lark User';
     
-    if (senderId?.id) {
-      console.log('🔍 Attempting to fetch user info for sender ID:', senderId.id);
-      userInfo = await getLarkUserInfo(senderId.id);
+    console.log('🔍 Analyzing sender ID for user info:', JSON.stringify(senderId, null, 2));
+    
+    if (senderId) {
+      console.log('🔍 Attempting to fetch user info for sender ID:', senderId);
+      userInfo = await getLarkUserInfo(senderId);
       
       if (userInfo) {
         actualUserId = userInfo.user_id;
         actualUserName = userInfo.name;
         console.log('✅ Using fetched user info:', { id: actualUserId, name: actualUserName });
       } else {
-        console.log('⚠️ Could not fetch user info, using fallback');
-        actualUserId = senderId.id;
+        console.log('⚠️ Could not fetch user info, using sender ID as fallback');
+        // Try to extract ID from sender object
+        if (typeof senderId === 'object' && senderId.id) {
+          actualUserId = senderId.id;
+          console.log('🔄 Using sender.id as user ID:', actualUserId);
+        } else if (typeof senderId === 'string') {
+          actualUserId = senderId;
+          console.log('🔄 Using sender string as user ID:', actualUserId);
+        }
       }
     } else {
       console.log('⚠️ No sender ID provided, using fallback user identification');
