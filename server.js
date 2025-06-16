@@ -379,8 +379,8 @@ async function handleMessage(event) {
     }
 
     console.log('🤖 Generating AI response...');
-    // Generate AI response with context
-    const aiResponse = await generateAIResponse(userMessage, chat_id);
+    // Generate AI response with context, passing sender information
+    const aiResponse = await generateAIResponse(userMessage, chat_id, sender_id);
     console.log('✅ AI response generated:', aiResponse);
 
     console.log('📤 Sending response to Lark...');
@@ -394,7 +394,7 @@ async function handleMessage(event) {
 }
 
 // Generate AI response using OpenAI
-async function generateAIResponse(userMessage, chatId) {
+async function generateAIResponse(userMessage, chatId, senderId = null) {
   const startTime = Date.now();
   
   try {
@@ -411,7 +411,7 @@ async function generateAIResponse(userMessage, chatId) {
     // Check if user is in ticket creation flow
     const ticketState = ticketCollectionState.get(chatId);
     if (ticketState) {
-      return await handleTicketCreationFlow(chatId, userMessage, ticketState);
+      return await handleTicketCreationFlow(chatId, userMessage, ticketState, senderId);
     }
     
     // Check if user is confirming they want to create a ticket
@@ -419,7 +419,7 @@ async function generateAIResponse(userMessage, chatId) {
     if (isConfirmingTicket) {
       console.log('✅ User confirming ticket creation, starting flow...');
       const category = categorizeIssue(userMessage, context);
-      return await startTicketCreation(chatId, userMessage, category);
+      return await startTicketCreation(chatId, userMessage, category, senderId);
     }
     
     // Check for escalation triggers
@@ -433,11 +433,44 @@ async function generateAIResponse(userMessage, chatId) {
       
       // Check for direct escalation phrases that should skip FAQs
       const directEscalationPhrases = [
+        // Existing direct escalation phrases
         /still.*(not|doesn't|don't).*(work|working)/i,
         /escalate.*to.*(support|team|human)/i,
         /can.*i.*escalate/i,
         /create.*ticket/i,
-        /not.*working/i
+        /not.*working/i,
+        
+        // Additional direct escalation phrases
+        /need.*human.*help/i,
+        /speak.*to.*(someone|person|human)/i,
+        /talk.*to.*(support|agent|human)/i,
+        /contact.*support/i,
+        /urgent.*help/i,
+        /emergency/i,
+        /critical.*issue/i,
+        /this.*is.*broken/i,
+        /completely.*broken/i,
+        /nothing.*works/i,
+        /tried.*everything/i,
+        /exhausted.*options/i,
+        /desperate.*help/i,
+        /last.*resort/i,
+        /immediately.*need/i,
+        /right.*now/i,
+        /asap/i,
+        /blocking.*work/i,
+        /cant.*continue/i,
+        /can't.*continue/i,
+        /cannot.*continue/i,
+        /lost.*data/i,
+        /system.*error/i,
+        /server.*error/i,
+        /crashed/i,
+        /frozen/i,
+        /timeout/i,
+        /failed.*multiple.*times/i,
+        /keep.*failing/i,
+        /repeatedly.*failing/i
       ];
       
       const isDirectEscalation = directEscalationPhrases.some(phrase => phrase.test(userMessage));
@@ -445,7 +478,7 @@ async function generateAIResponse(userMessage, chatId) {
       if (isDirectEscalation) {
         // Direct escalation - go straight to ticket creation
         console.log('🎫 Direct escalation detected, starting ticket creation');
-        return await startTicketCreation(chatId, userMessage, category);
+        return await startTicketCreation(chatId, userMessage, category, senderId);
       }
       
       // Check if we've already shown FAQs for this category
@@ -472,7 +505,7 @@ If these don't resolve your issue, I can create a support ticket for you to get 
         return faqResponse;
       } else {
         // Second escalation or no specific FAQs - start ticket creation
-        return await startTicketCreation(chatId, userMessage, category);
+        return await startTicketCreation(chatId, userMessage, category, senderId);
       }
     }
     
@@ -608,6 +641,62 @@ If these don't resolve your issue, I can create a support ticket for you to get 
     } else {
       return 'I encountered a technical issue while processing your request. Please try rephrasing your question or our support team for immediate assistance.';
     }
+  }
+}
+
+// Fetch user information from Lark API
+async function getLarkUserInfo(userId) {
+  try {
+    console.log('👤 Fetching user info for:', userId);
+    
+    // Get access token first
+    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET
+      })
+    });
+
+    const tokenData = await tokenResponse.json();
+    if (tokenData.code !== 0) {
+      console.error('❌ Failed to get access token:', tokenData.msg);
+      return null;
+    }
+
+    const accessToken = tokenData.tenant_access_token;
+
+    // Fetch user information
+    const userResponse = await fetch(`https://open.larksuite.com/open-apis/contact/v3/users/${userId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const userData = await userResponse.json();
+    if (userData.code !== 0) {
+      console.error('❌ Failed to get user info:', userData.msg);
+      return null;
+    }
+
+    const userInfo = {
+      user_id: userId,
+      name: userData.data.user?.name || 'Unknown User',
+      email: userData.data.user?.email || null,
+      mobile: userData.data.user?.mobile || null,
+      avatar: userData.data.user?.avatar?.avatar_240 || null
+    };
+
+    console.log('✅ User info fetched successfully:', userInfo);
+    return userInfo;
+  } catch (error) {
+    console.error('❌ Error fetching user info:', error);
+    return null;
   }
 }
 
@@ -1062,6 +1151,7 @@ function checkTicketConfirmation(context, userMessage) {
 
 function shouldEscalateToTicket(context, userMessage) {
   const escalationTriggers = [
+    // Existing triggers
     /still.*(not|doesn't|don't|doesnt).*(work|working|help|helping)/i,
     /tried.*(that|everything|all)/i,
     /doesn't.*(work|help)/i,
@@ -1081,7 +1171,134 @@ function shouldEscalateToTicket(context, userMessage) {
     /(cant|can't|cannot).*(add|create|upload|login|access)/i,
     /not.*working/i,
     /having.*trouble/i,
-    /error/i
+    /error/i,
+    
+    // New comprehensive triggers - User frustration expressions
+    /this.*(sucks|terrible|awful|horrible|useless)/i,
+    /waste.*of.*time/i,
+    /annoying/i,
+    /ridiculous/i,
+    /pathetic/i,
+    /broken/i,
+    /buggy/i,
+    /glitched/i,
+    /messed.*up/i,
+    /screwed.*up/i,
+    /totally.*broken/i,
+    /completely.*broken/i,
+    /not.*functioning/i,
+    
+    // Request for human help variations
+    /talk.*to.*(someone|person|human|agent|rep)/i,
+    /contact.*(support|help|team)/i,
+    /get.*(help|support).*from.*(human|person)/i,
+    /live.*(chat|support|help|agent)/i,
+    /real.*(person|human|agent)/i,
+    /technical.*(support|help)/i,
+    /customer.*(service|support)/i,
+    /help.*desk/i,
+    /support.*team/i,
+    /human.*help/i,
+    /manual.*help/i,
+    
+    // Problem persistence expressions  
+    /keeps.*(happening|occurring|breaking|failing)/i,
+    /always.*(broken|failing|not.*working)/i,
+    /constantly.*(failing|broken|not.*working)/i,
+    /repeatedly.*(failing|broken|not.*working)/i,
+    /consistently.*(failing|broken|not.*working)/i,
+    /same.*problem/i,
+    /same.*issue/i,
+    /again.*and.*again/i,
+    /over.*and.*over/i,
+    /multiple.*times/i,
+    
+    // Inability to perform tasks
+    /unable.*to/i,
+    /impossible.*to/i,
+    /(cant|can't|cannot).*(save|submit|complete|finish)/i,
+    /(cant|can't|cannot).*(get.*it.*to|make.*it)/i,
+    /won't.*let.*me/i,
+    /wont.*let.*me/i,
+    /preventing.*me/i,
+    /blocking.*me/i,
+    /stuck.*on/i,
+    /stuck.*at/i,
+    /locked.*out/i,
+    
+    // Error and failure expressions
+    /error.*message/i,
+    /error.*code/i,
+    /system.*error/i,
+    /failed.*to/i,
+    /failure/i,
+    /crash/i,
+    /crashed/i,
+    /freezing/i,
+    /frozen/i,
+    /timeout/i,
+    /timed.*out/i,
+    /connection.*error/i,
+    /server.*error/i,
+    /database.*error/i,
+    /404.*error/i,
+    /500.*error/i,
+    
+    // Time-sensitive situations
+    /asap/i,
+    /immediately/i,
+    /right.*now/i,
+    /emergency/i,
+    /deadline/i,
+    /time.*sensitive/i,
+    /running.*out.*of.*time/i,
+    /need.*this.*fixed/i,
+    /fix.*this.*now/i,
+    /priority/i,
+    /high.*priority/i,
+    
+    // Workflow blocking expressions
+    /(cant|can't|cannot).*continue/i,
+    /(cant|can't|cannot).*proceed/i,
+    /(cant|can't|cannot).*move.*forward/i,
+    /(cant|can't|cannot).*complete.*work/i,
+    /blocking.*my.*work/i,
+    /stopping.*me.*from/i,
+    /preventing.*work/i,
+    /halt.*work/i,
+    /work.*stopped/i,
+    
+    // Data loss concerns
+    /lost.*data/i,
+    /lost.*work/i,
+    /disappeared/i,
+    /vanished/i,
+    /missing.*files/i,
+    /missing.*data/i,
+    /corrupted/i,
+    /damaged/i,
+    
+    // Multiple attempt expressions
+    /tried.*multiple.*times/i,
+    /tried.*several.*times/i,
+    /attempted.*many.*times/i,
+    /keep.*trying/i,
+    /tried.*different.*ways/i,
+    /nothing.*works/i,
+    /nothing.*is.*working/i,
+    /none.*of.*this.*works/i,
+    
+    // Final resort expressions
+    /last.*resort/i,
+    /final.*option/i,
+    /no.*other.*choice/i,
+    /exhausted.*options/i,
+    /tried.*everything.*else/i,
+    /what.*else.*can.*i.*do/i,
+    /help.*me.*please/i,
+    /please.*help/i,
+    /desperate/i,
+    /desperately.*need/i
   ];
 
   console.log('🔍 Checking escalation for message:', userMessage);
@@ -1097,14 +1314,15 @@ function shouldEscalateToTicket(context, userMessage) {
   return shouldEscalate;
 }
 
-async function startTicketCreation(chatId, userMessage, category) {
+async function startTicketCreation(chatId, userMessage, category, senderId = null) {
   console.log('🎫 Starting ticket creation for chat:', chatId);
   
-  // Initialize ticket collection state
+  // Initialize ticket collection state with user information
   ticketCollectionState.set(chatId, {
     step: 'title',
     category: category,
     originalMessage: userMessage,
+    senderId: senderId,
     data: {}
   });
   
@@ -1114,8 +1332,9 @@ async function startTicketCreation(chatId, userMessage, category) {
 Please provide a brief title that describes your issue (e.g., "Cannot add candidate to job", "Login page not loading"):`;
 }
 
-async function handleTicketCreationFlow(chatId, userMessage, ticketState) {
-  const { step, data, category } = ticketState;
+async function handleTicketCreationFlow(chatId, userMessage, ticketState, senderId = null) {
+  const { step, data, category, senderId: storedSenderId } = ticketState;
+  const actualSenderId = senderId || storedSenderId;
   
   switch (step) {
     case 'title':
@@ -1163,7 +1382,7 @@ Please reply with the number (1-4):`;
       data.urgency = urgencyMap[userMessage.trim()] || 'medium';
       
       // Create the ticket
-      const ticket = await createTicketFromData(chatId, data, category, ticketState.originalMessage);
+      const ticket = await createTicketFromData(chatId, data, category, ticketState.originalMessage, actualSenderId);
       
       // Clear the collection state
       ticketCollectionState.delete(chatId);
@@ -1223,22 +1442,41 @@ I apologize for the inconvenience. Our technical team has been notified of this 
   }
 }
 
-async function createTicketFromData(chatId, data, category, originalMessage) {
+async function createTicketFromData(chatId, data, category, originalMessage, senderId = null) {
   try {
     console.log('🔧 Creating ticket with data:', {
       chatId,
       category,
       title: data.title,
-      urgency: data.urgency
+      urgency: data.urgency,
+      senderId
     });
     
-    // Get user info from Lark (you might want to implement this)
-    const userId = 'user_' + chatId; // Simplified for now
+    // Get actual user info from Lark
+    let userInfo = null;
+    let actualUserId = senderId?.id || `user_${chatId}`;
+    let actualUserName = 'Lark User';
+    
+    if (senderId?.id) {
+      console.log('🔍 Attempting to fetch user info for sender ID:', senderId.id);
+      userInfo = await getLarkUserInfo(senderId.id);
+      
+      if (userInfo) {
+        actualUserId = userInfo.user_id;
+        actualUserName = userInfo.name;
+        console.log('✅ Using fetched user info:', { id: actualUserId, name: actualUserName });
+      } else {
+        console.log('⚠️ Could not fetch user info, using fallback');
+        actualUserId = senderId.id;
+      }
+    } else {
+      console.log('⚠️ No sender ID provided, using fallback user identification');
+    }
     
     const ticketData = {
-      user_id: userId,
+      user_id: actualUserId,
       chat_id: chatId,
-      user_name: data.userName || 'Lark User',
+      user_name: actualUserName,
       issue_category: category,
       issue_title: data.title,
       issue_description: data.description,
@@ -1249,7 +1487,8 @@ async function createTicketFromData(chatId, data, category, originalMessage) {
       status: 'open',
       conversation_context: {
         original_message: originalMessage,
-        collected_data: data
+        collected_data: data,
+        user_info: userInfo // Store additional user info for reference
       }
     };
     
