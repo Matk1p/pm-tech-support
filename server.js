@@ -1315,7 +1315,7 @@ app.post('/update-knowledge-base', async (req, res) => {
     }
     
     // Update knowledge base (database-first approach)
-    const success = await addToKnowledgeBase(qaPair);
+    const success = await addToKnowledgeBase({...qaPair, ticketNumber});
     if (!success) {
       return res.status(500).json({ 
         error: 'Failed to update knowledge base' 
