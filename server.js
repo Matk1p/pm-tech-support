@@ -1468,14 +1468,6 @@ app.get('/current-knowledge-base', (req, res) => {
 app.listen(PORT, async () => {
   console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
   console.log(`📝 Health check: http://localhost:${PORT}/health`);
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
   
   // Initialize knowledge base
   try {
@@ -1486,13 +1478,6 @@ app.listen(PORT, async () => {
     console.error('⚠️ Knowledge base initialization failed:', error.message);
     console.log('🔄 Using file-based knowledge base as fallback');
   }
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 });
 
 // Handle graceful shutdown
