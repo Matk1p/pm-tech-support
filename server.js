@@ -300,6 +300,11 @@ async function loadKnowledgeBaseFromDB() {
     
     if (error) {
       console.log('⚠️ Database query failed, using static knowledge base only:', error.message);
+      console.log('🔍 Error code:', error.code);
+      console.log('🔍 Error details:', JSON.stringify(error, null, 2));
+      console.log('🔧 Environment:', process.env.VERCEL ? 'Vercel' : 'Local');
+      console.log('🔧 Supabase URL configured:', !!process.env.SUPABASE_URL);
+      console.log('🔧 Supabase key configured:', !!process.env.SUPABASE_ANON_KEY);
       return knowledgeBase;
     }
     
