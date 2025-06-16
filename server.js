@@ -495,7 +495,11 @@ async function handleMessage(event) {
     }
 
     // Check if the bot was mentioned or if it's a direct message
-    const isMentioned = mentions && mentions.some(mention => mention.key === process.env.LARK_APP_ID);
+    const isMentioned = mentions && mentions.some(mention => 
+      mention.key === process.env.LARK_APP_ID || 
+      mention.name === 'Ask Danish' ||
+      (mention.id && (mention.id.open_id || mention.id.user_id || mention.id.union_id))
+    );
     const isDirectMessage = event.message.chat_type === 'p2p';
 
     console.log('🎯 Response conditions:');
@@ -2168,7 +2172,7 @@ function isSupportSolution(message, isReplyToTicket = false) {
 /**
  * Extract ticket number from message context - ENHANCED
  */
-function extractTicketNumber(message, event = null) {
+async function extractTicketNumber(message, event = null) {
   // First, try to find ticket number directly in the message
   const ticketPattern = /([A-Z]{2,3}-\d{8}-\d{4})/i;
   const directMatch = message.match(ticketPattern);
@@ -2185,9 +2189,57 @@ function extractTicketNumber(message, event = null) {
     if (contextMatch) {
       return contextMatch[1];
     }
+    
+    // If this message has parent_id or root_id, it's a reply
+    // Check if we can find the ticket from recent conversations
+    if (event.message.parent_id || event.message.root_id) {
+      console.log('🧵 Detected reply message - searching for ticket in conversation context');
+      
+      // For now, let's check if we have any recent tickets from this chat
+      // TODO: In future, we could query Lark API to get the parent message content
+      const chatId = event.message.chat_id;
+      
+             // Try to find the most recent ticket from this chat by searching recent database entries
+       return await findRecentTicketFromChat(chatId);
+    }
   }
   
   return null;
+}
+
+/**
+ * Find the most recent ticket from a specific chat
+ */
+async function findRecentTicketFromChat(chatId) {
+  try {
+    // Look for recent tickets created in this chat (last 24 hours)
+    const oneDayAgo = new Date();
+    oneDayAgo.setHours(oneDayAgo.getHours() - 24);
+    
+    const { data: recentTickets, error } = await supabase
+      .from('support_tickets')
+      .select('ticket_number')
+      .eq('chat_id', chatId)
+      .gte('created_at', oneDayAgo.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (error) {
+      console.log('⚠️ Error searching for recent tickets:', error.message);
+      return null;
+    }
+    
+    if (recentTickets && recentTickets.length > 0) {
+      const ticketNumber = recentTickets[0].ticket_number;
+      console.log('🎫 Found recent ticket from this chat:', ticketNumber);
+      return ticketNumber;
+    }
+    
+    return null;
+  } catch (error) {
+    console.log('⚠️ Exception searching for recent tickets:', error.message);
+    return null;
+  }
 }
 
 /**
@@ -2202,9 +2254,13 @@ function isReplyToSupportTicket(message, event = null) {
     /pmn-\d{8}-\d{4}/i
   ];
   
+  // Also check if this is a threaded reply
+  const isThreadedReply = event && event.message && 
+    (event.message.parent_id || event.message.root_id);
+  
   const isReply = supportReplyPatterns.some(pattern => 
     pattern.test(message) || (event && pattern.test(JSON.stringify(event)))
-  );
+  ) || isThreadedReply;
   
   return isReply;
 }
@@ -2381,7 +2437,7 @@ async function processSupportSolution(message, chatId, senderId, event = null) {
     console.log('✅ Support solution detected, extracting ticket info...');
     
     // Extract ticket number from message or context
-    const ticketNumber = extractTicketNumber(message, event);
+    const ticketNumber = await extractTicketNumber(message, event);
     if (!ticketNumber) {
       console.log('⚠️ No ticket number found in solution message or context');
       return false;
