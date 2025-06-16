@@ -332,8 +332,17 @@ async function addToKnowledgeBase(qaPair) {
       .select();
     
     if (error) {
-      console.log('⚠️ Database insert failed, trying file update:', error.message);
+      console.log('⚠️ Database insert failed:', error.message);
+      console.log('🔍 Error details:', JSON.stringify(error, null, 2));
+      
+      // Check if it's a permission issue
+      if (error.code === '42501' || error.message.includes('permission denied')) {
+        console.log('🔐 Permission denied - RLS policies may need to be configured');
+        console.log('💡 Check fix-rls-policies.sql for SQL commands to fix this');
+      }
+      
       // Fallback to file update for local development
+      console.log('🔄 Falling back to file-based knowledge base update...');
       return await updateKnowledgeBase(qaPair);
     }
     
@@ -1456,9 +1465,22 @@ app.get('/current-knowledge-base', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
   console.log(`📝 Health check: http://localhost:${PORT}/health`);
+<<<<<<< Updated upstream
+=======
+  
+  // Initialize knowledge base
+  try {
+    await initKnowledgeBase();
+    await loadKnowledgeBaseFromDB();
+    console.log(`🗄️ Database-based knowledge base initialized`);
+  } catch (error) {
+    console.error('⚠️ Knowledge base initialization failed:', error.message);
+    console.log('🔄 Using file-based knowledge base as fallback');
+  }
+>>>>>>> Stashed changes
 });
 
 // Handle graceful shutdown
