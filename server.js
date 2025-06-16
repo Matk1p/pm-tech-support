@@ -267,7 +267,7 @@ const supabase = createClient(
   }
 );
 
-// Knowledge base storage - Use Supabase instead of file system for Vercel
+// Knowledge base storage - Hybrid approach: Static file + dynamic database entries
 const KNOWLEDGE_BASE_TABLE = 'knowledge_base'; // Supabase will handle the schema prefix
 
 // Initialize knowledge base table if needed
@@ -285,42 +285,73 @@ async function initKnowledgeBase() {
   }
 }
 
-// Load knowledge base from database or file
+// Load knowledge base from file and supplement with database entries
 async function loadKnowledgeBaseFromDB() {
   try {
+    // First, always load the static knowledge base from the md file
+    let knowledgeBase = loadKnowledgeBase();
+    
+    // Then try to supplement with dynamic Q&A from database
     const { data, error } = await supabase
       .from(KNOWLEDGE_BASE_TABLE)
       .select('*')
+      .eq('is_active', true) // Only get active entries
       .order('created_at', { ascending: true });
     
-    if (error || !data || data.length === 0) {
-      // Fallback to file-based knowledge base
-      return loadKnowledgeBase();
+    if (error) {
+      console.log('⚠️ Database query failed, using static knowledge base only:', error.message);
+      return knowledgeBase;
     }
     
-    // Build knowledge base from database entries
-    let knowledgeBase = `# PM-Next Recruitment Management System - Comprehensive Knowledge Base
-
-## Core Features and Navigation
-[... existing static content ...]
-
-## Common User Questions and Answers
-`;
-    
-    data.forEach(entry => {
-      knowledgeBase += `
-### Q: ${entry.question}
-**A**: ${entry.answer}
-`;
-    });
+    if (data && data.length > 0) {
+      // Find the end of the "Common User Questions and Answers" section
+      const questionsSection = '## Common User Questions and Answers';
+      const questionsIndex = knowledgeBase.indexOf(questionsSection);
+      
+      if (questionsIndex !== -1) {
+        // Find the next section or end of file
+        const nextSectionIndex = knowledgeBase.indexOf('\n## ', questionsIndex + questionsSection.length);
+        const insertIndex = nextSectionIndex !== -1 ? nextSectionIndex : knowledgeBase.length;
+        
+        // Build additional Q&A entries from database
+        let additionalQA = '\n\n### Additional Support Solutions\n';
+        data.forEach(entry => {
+          additionalQA += `\n### Q: ${entry.question}\n**A**: ${entry.answer}\n`;
+          if (entry.category) {
+            additionalQA += `*Category: ${entry.category}*\n`;
+          }
+        });
+        
+        // Insert the database entries before the next section
+        knowledgeBase = knowledgeBase.slice(0, insertIndex) + additionalQA + '\n' + knowledgeBase.slice(insertIndex);
+        
+        console.log('📚 Knowledge base loaded: Static content + ' + data.length + ' dynamic entries from database');
+      } else {
+        // If we can't find the questions section, append to the end
+        let additionalQA = '\n\n## Additional Support Solutions\n';
+        data.forEach(entry => {
+          additionalQA += `\n### Q: ${entry.question}\n**A**: ${entry.answer}\n`;
+          if (entry.category) {
+            additionalQA += `*Category: ${entry.category}*\n`;
+          }
+        });
+        knowledgeBase += additionalQA;
+        
+        console.log('📚 Knowledge base loaded: Static content + ' + data.length + ' dynamic entries (appended)');
+      }
+    } else {
+      console.log('📚 Knowledge base loaded: Static content only (no database entries)');
+    }
     
     PM_NEXT_KNOWLEDGE = knowledgeBase;
-    console.log('📚 Knowledge base loaded from database:', data.length, 'entries');
     return knowledgeBase;
     
   } catch (error) {
-    console.error('❌ Error loading from database, using file fallback:', error);
-    return loadKnowledgeBase();
+    console.error('❌ Error loading from database, using static knowledge base only:', error);
+    // Fallback to just the static file content
+    const staticKnowledgeBase = loadKnowledgeBase();
+    console.log('📚 Knowledge base loaded: Static content only (database error fallback)');
+    return staticKnowledgeBase;
   }
 }
 
@@ -366,7 +397,7 @@ async function addToKnowledgeBase(qaPair) {
     
     console.log('✅ Knowledge base entry added to database');
     
-    // Reload knowledge base from database
+    // Reload knowledge base (static + database content)
     await loadKnowledgeBaseFromDB();
     
     return true;
@@ -1661,16 +1692,16 @@ app.get('/knowledge-stats', async (req, res) => {
   }
 });
 
-// Reload knowledge base endpoint
-app.post('/reload-knowledge-base', (req, res) => {
+// Reload knowledge base endpoint (static + database content)
+app.post('/reload-knowledge-base', async (req, res) => {
   try {
     const oldLength = PM_NEXT_KNOWLEDGE.length;
-    loadKnowledgeBase();
+    await loadKnowledgeBaseFromDB(); // Use the hybrid approach
     const newLength = PM_NEXT_KNOWLEDGE.length;
     
     res.json({
       success: true,
-      message: 'Knowledge base reloaded successfully',
+      message: 'Knowledge base reloaded successfully (static + dynamic content)',
       stats: {
         oldSize: Math.round(oldLength / 1024 * 100) / 100,
         newSize: Math.round(newLength / 1024 * 100) / 100,
@@ -1703,14 +1734,14 @@ app.listen(PORT, async () => {
   console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
   console.log(`📝 Health check: http://localhost:${PORT}/health`);
   
-  // Initialize knowledge base
+  // Initialize knowledge base (static file + dynamic database entries)
   try {
     await initKnowledgeBase();
     await loadKnowledgeBaseFromDB();
-    console.log(`🗄️ Database-based knowledge base initialized`);
+    console.log(`🗄️ Hybrid knowledge base initialized (static + dynamic content)`);
   } catch (error) {
     console.error('⚠️ Knowledge base initialization failed:', error.message);
-    console.log('🔄 Using file-based knowledge base as fallback');
+    console.log('🔄 Using static file-based knowledge base only');
   }
 });
 
