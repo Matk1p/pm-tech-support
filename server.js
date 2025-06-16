@@ -36,12 +36,20 @@ const analytics = {
 // Support ticket system
 const ticketCollectionState = new Map(); // Track users in ticket creation flow
 
-// Knowledge base auto-update system
+// Knowledge base auto-update system - FLEXIBLE APPROACH
 const SOLUTION_KEYWORDS = [
+  // Explicit solution indicators
   'solution:', 'solution for', 'fix:', 'resolved:', 'answer:', 'steps to fix:', 'how to fix:',
   'to resolve this:', 'the issue is:', 'you need to:', 'try this:',
   'fixed by:', 'solution is:', 'resolve by:', 'fix this by:',
   'here\'s the solution:', 'here is how to fix:', 'problem solved:'
+];
+
+// Relaxed detection - these indicate actionable solutions
+const SOLUTION_INDICATORS = [
+  'refresh', 'clear cache', 'restart', 'reload', 'try again', 'check',
+  'update', 'install', 'uninstall', 'contact', 'go to', 'click',
+  'navigate to', 'open', 'close', 'enable', 'disable', 'settings'
 ];
 
 const KNOWLEDGE_UPDATE_INDICATORS = [
@@ -540,7 +548,7 @@ async function handleMessage(event) {
     }
 
     // Check if this is a support solution for knowledge base update
-    const solutionProcessed = await processSupportSolution(userMessage, chat_id, sender_id);
+    const solutionProcessed = await processSupportSolution(userMessage, chat_id, sender_id, event);
     
     if (!solutionProcessed) {
       console.log('🤖 Generating AI response...');
@@ -1031,6 +1039,95 @@ app.get('/health', (req, res) => {
     service: 'PM-Next Lark Bot',
     timestamp: new Date().toISOString()
   });
+});
+
+// Test database connection endpoint
+app.post('/test-db-connection', async (req, res) => {
+  try {
+    console.log('🔍 Testing database connection...');
+    
+    // Test Supabase connection
+    const { data: testData, error: testError } = await supabase
+      .from('support_tickets')
+      .select('count')
+      .limit(1);
+    
+    if (testError) {
+      console.error('❌ Database test failed:', testError);
+      return res.status(500).json({ 
+        success: false, 
+        error: testError.message,
+        details: testError
+      });
+    }
+    
+    // Test knowledge base table
+    const { data: kbData, error: kbError } = await supabase
+      .from('knowledge_base')
+      .select('count')
+      .limit(1);
+    
+    if (kbError) {
+      console.error('❌ Knowledge base test failed:', kbError);
+      return res.status(500).json({ 
+        success: false, 
+        error: kbError.message,
+        table: 'knowledge_base'
+      });
+    }
+    
+    console.log('✅ Database connection successful');
+    res.json({
+      success: true,
+      message: 'Database connection working',
+      environment: process.env.VERCEL ? 'vercel' : 'local',
+      supabaseUrl: process.env.SUPABASE_URL ? 'configured' : 'missing',
+      supabaseKey: process.env.SUPABASE_ANON_KEY ? 'configured' : 'missing'
+    });
+    
+  } catch (error) {
+    console.error('❌ Database connection error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Check knowledge base entries endpoint
+app.get('/check-kb-entries', async (req, res) => {
+  try {
+    const { data: entries, error } = await supabase
+      .from('knowledge_base')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(5);
+    
+    if (error) {
+      return res.status(500).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+    
+    res.json({
+      success: true,
+      count: entries.length,
+      entries: entries.map(entry => ({
+        id: entry.id,
+        ticket_source: entry.ticket_source,
+        question: entry.question?.substring(0, 50) + '...',
+        category: entry.category,
+        created_at: entry.created_at
+      }))
+    });
+    
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
 });
 
 
@@ -2021,12 +2118,24 @@ async function createTicketFromData(chatId, data, category, originalMessage, sen
 // Knowledge Base Auto-Update Functions
 
 /**
- * Detect if a message contains a support solution
+ * Detect if a message contains a support solution - FLEXIBLE APPROACH
  */
-function isSupportSolution(message) {
+function isSupportSolution(message, isReplyToTicket = false) {
   const lowerMessage = message.toLowerCase();
   
-  // Check for solution keywords
+  // If this is a reply to a support ticket, be much more lenient
+  if (isReplyToTicket) {
+    // Any substantive reply to a ticket could be a solution
+    // Check for actionable content (minimum 10 characters, contains action words)
+    if (message.length >= 10) {
+      const hasActionableContent = SOLUTION_INDICATORS.some(indicator => 
+        lowerMessage.includes(indicator.toLowerCase())
+      );
+      if (hasActionableContent) return true;
+    }
+  }
+  
+  // Check for explicit solution keywords
   const hasSolutionKeyword = SOLUTION_KEYWORDS.some(keyword => 
     lowerMessage.includes(keyword.toLowerCase())
   );
@@ -2045,7 +2154,10 @@ function isSupportSolution(message) {
     /to.*resolve.*this/i,
     /issue.*caused.*by/i,
     /workaround.*is/i,
-    /temporary.*fix/i
+    /temporary.*fix/i,
+    /first.*try/i,
+    /next.*step/i,
+    /should.*work/i
   ];
   
   const hasPattern = supportPatterns.some(pattern => pattern.test(message));
@@ -2054,13 +2166,47 @@ function isSupportSolution(message) {
 }
 
 /**
- * Extract ticket number from message context
+ * Extract ticket number from message context - ENHANCED
  */
-function extractTicketNumber(message) {
-  // Simplified pattern - just look for the ticket format anywhere in the message
+function extractTicketNumber(message, event = null) {
+  // First, try to find ticket number directly in the message
   const ticketPattern = /([A-Z]{2,3}-\d{8}-\d{4})/i;
-  const match = message.match(ticketPattern);
-  return match ? match[1] : null;
+  const directMatch = message.match(ticketPattern);
+  if (directMatch) {
+    return directMatch[1];
+  }
+  
+  // If this is a reply message, check if we can find ticket context
+  if (event && event.message) {
+    // Check if the message is a reply (in Lark, replies contain context)
+    // Look for ticket patterns in any quoted/referenced content
+    const messageContent = JSON.stringify(event.message);
+    const contextMatch = messageContent.match(ticketPattern);
+    if (contextMatch) {
+      return contextMatch[1];
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Check if message is likely a reply to a support ticket
+ */
+function isReplyToSupportTicket(message, event = null) {
+  // Check if message mentions support ticket patterns
+  const supportReplyPatterns = [
+    /reply.*to.*ask.*danish/i,
+    /support.*ticket/i,
+    /ticket.*created/i,
+    /pmn-\d{8}-\d{4}/i
+  ];
+  
+  const isReply = supportReplyPatterns.some(pattern => 
+    pattern.test(message) || (event && pattern.test(JSON.stringify(event)))
+  );
+  
+  return isReply;
 }
 
 /**
@@ -2211,19 +2357,22 @@ async function updateKnowledgeBase(qaPair) {
 }
 
 /**
- * Process support solution for knowledge base update
+ * Process support solution for knowledge base update - ENHANCED
  */
-async function processSupportSolution(message, chatId, senderId) {
+async function processSupportSolution(message, chatId, senderId, event = null) {
   try {
     console.log('🔍 Processing potential support solution...');
     
-    // Check if message contains a solution first
-    if (!isSupportSolution(message)) {
+    // Check if this is a reply to a support ticket
+    const isReply = isReplyToSupportTicket(message, event);
+    
+    // Check if message contains a solution (use flexible detection)
+    if (!isSupportSolution(message, isReply)) {
+      console.log('❌ Not detected as a support solution');
       return false;
     }
     
     // Check if this is from the configured support group (if set)
-    // If no support group is configured, allow processing from any chat
     if (process.env.LARK_SUPPORT_GROUP_ID && chatId !== process.env.LARK_SUPPORT_GROUP_ID) {
       console.log('⚠️ Solution detected but not from configured support group');
       return false;
@@ -2231,10 +2380,10 @@ async function processSupportSolution(message, chatId, senderId) {
     
     console.log('✅ Support solution detected, extracting ticket info...');
     
-    // Extract ticket number from message
-    const ticketNumber = extractTicketNumber(message);
+    // Extract ticket number from message or context
+    const ticketNumber = extractTicketNumber(message, event);
     if (!ticketNumber) {
-      console.log('⚠️ No ticket number found in solution message');
+      console.log('⚠️ No ticket number found in solution message or context');
       return false;
     }
     
