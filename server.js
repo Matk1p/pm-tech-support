@@ -2086,13 +2086,15 @@ async function processSupportSolution(message, chatId, senderId) {
   try {
     console.log('🔍 Processing potential support solution...');
     
-    // Check if this is from the support group
-    if (chatId !== process.env.LARK_SUPPORT_GROUP_ID) {
-      return false; // Only process messages from support group
+    // Check if message contains a solution first
+    if (!isSupportSolution(message)) {
+      return false;
     }
     
-    // Check if message contains a solution
-    if (!isSupportSolution(message)) {
+    // Check if this is from the configured support group (if set)
+    // If no support group is configured, allow processing from any chat
+    if (process.env.LARK_SUPPORT_GROUP_ID && chatId !== process.env.LARK_SUPPORT_GROUP_ID) {
+      console.log('⚠️ Solution detected but not from configured support group');
       return false;
     }
     
