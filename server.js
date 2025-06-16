@@ -301,10 +301,24 @@ async function loadKnowledgeBaseFromDB() {
     if (error) {
       console.log('⚠️ Database query failed, using static knowledge base only:', error.message);
       console.log('🔍 Error code:', error.code);
-      console.log('🔍 Error details:', JSON.stringify(error, null, 2));
       console.log('🔧 Environment:', process.env.VERCEL ? 'Vercel' : 'Local');
-      console.log('🔧 Supabase URL configured:', !!process.env.SUPABASE_URL);
-      console.log('🔧 Supabase key configured:', !!process.env.SUPABASE_ANON_KEY);
+      console.log('🔧 Supabase URL:', process.env.SUPABASE_URL ? 'Set (' + process.env.SUPABASE_URL.substring(0, 30) + '...)' : 'MISSING');
+      console.log('🔧 Supabase key:', process.env.SUPABASE_ANON_KEY ? 'Set (' + process.env.SUPABASE_ANON_KEY.substring(0, 20) + '...)' : 'MISSING');
+      
+      // Check for common production issues
+      if (!process.env.SUPABASE_URL) {
+        console.log('❌ SUPABASE_URL is missing in production environment');
+      }
+      if (!process.env.SUPABASE_ANON_KEY) {
+        console.log('❌ SUPABASE_ANON_KEY is missing in production environment');
+      }
+      if (error.message.includes('permission denied') || error.code === '42501') {
+        console.log('🔐 RLS permission issue - check Supabase RLS policies');
+      }
+      if (error.message.includes('relation') && error.message.includes('does not exist')) {
+        console.log('🗄️ Table does not exist - check schema and table name');
+      }
+      
       return knowledgeBase;
     }
     
