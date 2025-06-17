@@ -1880,15 +1880,24 @@ app.get('/current-knowledge-base', (req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, async () => {
-  console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
-  console.log(`📝 Health check: http://localhost:${PORT}/health`);
-  
-  // Initialize knowledge base (static file + dynamic database entries)
-  // Note: In serverless environments like Vercel, this won't run
-  // Knowledge base will be initialized lazily on first request
-  if (!process.env.VERCEL) {
+// Initialize knowledge base for serverless environment
+async function initializeForServerless() {
+  console.log('🚀 Serverless environment detected - initializing for Vercel');
+  try {
+    await ensureKnowledgeBaseInitialized();
+    console.log(`🗄️ Hybrid knowledge base initialized (static + dynamic content)`);
+  } catch (error) {
+    console.error('⚠️ Knowledge base initialization failed:', error.message);
+    console.log('🔄 Using static file-based knowledge base only');
+  }
+}
+
+// For local development only
+if (!process.env.VERCEL && !process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  app.listen(PORT, async () => {
+    console.log(`🤖 PM-Next Lark Bot server is running on port ${PORT}`);
+    console.log(`📝 Health check: http://localhost:${PORT}/health`);
+    
     try {
       await ensureKnowledgeBaseInitialized();
       console.log(`🗄️ Hybrid knowledge base initialized (static + dynamic content)`);
@@ -1896,16 +1905,20 @@ app.listen(PORT, async () => {
       console.error('⚠️ Knowledge base initialization failed:', error.message);
       console.log('🔄 Using static file-based knowledge base only');
     }
-  } else {
-    console.log('🚀 Serverless environment detected - knowledge base will initialize on first request');
-  }
-});
+  });
 
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down PM-Next Lark Bot server...');
-  process.exit(0);
-});
+  // Handle graceful shutdown
+  process.on('SIGINT', () => {
+    console.log('\n🛑 Shutting down PM-Next Lark Bot server...');
+    process.exit(0);
+  });
+} else {
+  // Serverless environment - initialize on first request
+  initializeForServerless();
+}
+
+// Export the app for Vercel
+module.exports = app;
 
 function trackRequest(message, responseTime, fromCache = false) {
   analytics.totalRequests++;

@@ -121,6 +121,11 @@ async function logUserMessage(data) {
     ticketNumber = null
   } = data;
   
+  // Cleanup sessions in serverless environments
+  if (process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    cleanupOldSessions();
+  }
+  
   const sessionId = getSessionId(chatId);
   const currentTurn = conversationTurns.get(sessionId) + 1;
   conversationTurns.set(sessionId, currentTurn);
@@ -369,8 +374,13 @@ function cleanupOldSessions() {
   }
 }
 
-// Clean up sessions every 15 minutes
-setInterval(cleanupOldSessions, 15 * 60 * 1000);
+// Clean up sessions every 15 minutes (only in non-serverless environments)
+if (!process.env.VERCEL && !process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  setInterval(cleanupOldSessions, 15 * 60 * 1000);
+} else {
+  // In serverless environments, cleanup will happen on each request
+  console.log('🚀 Serverless environment detected - session cleanup will happen per request');
+}
 
 module.exports = {
   logUserMessage,
