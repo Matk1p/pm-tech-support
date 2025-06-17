@@ -1,6 +1,12 @@
 
 # PM-Next Recruitment Management System - Comprehensive Knowledge Base
 
+## Important Instructions for AI Assistant
+
+**Feature Availability**: When users ask about features marked with 🚧 **COMING SOON**, respond that the feature is currently in development and will be available soon. Do not provide detailed instructions for unavailable features. Instead, acknowledge their interest and let them know the feature is being worked on.
+
+**Available Features**: All features not marked as "Coming Soon" are fully functional and you can provide complete guidance on their usage.
+
 ## Core Features and Navigation
 
 ### 1. Candidate Management
@@ -44,15 +50,17 @@
 - Generate pipeline reports
 
 ### 5. Analytics Dashboard
-**Purpose**: Real-time KPIs and performance monitoring
-**Navigation**: Dashboard → Analytics
-**Available Metrics**:
+**Status**: 🚧 **COMING SOON** - This feature is currently in development
+**Purpose**: Real-time KPIs and performance monitoring (when available)
+**Expected Features**:
 - Revenue tracking and forecasting
 - Candidate conversion rates
 - Job fill rates
 - Time-to-hire metrics
 - Performance indicators
 - Custom report generation
+
+*Note: If users ask about analytics, please respond that this feature is currently in development and will be available soon.*
 
 ### 6. Calendar Integration
 **Purpose**: Schedule interviews, meetings, and manage appointments
@@ -95,13 +103,8 @@
 7. Click "Save" to publish
 
 ### Q: Where can I see the analytics?
-**A**:
-Dashboard → Analytics provides comprehensive metrics including:
-- Revenue forecasting and tracking
-- Candidate pipeline conversion rates
-- Job fill rates and time-to-hire
-- Individual and team performance
-- Custom reports and data export
+**A**: 
+The Analytics dashboard is currently in development and will be available soon. This feature will provide comprehensive metrics including revenue forecasting, candidate pipeline conversion rates, job fill rates, time-to-hire metrics, and custom reports. We appreciate your patience as we work to deliver this powerful feature.
 
 ### Q: How do I schedule an interview?
 **A**:
@@ -132,7 +135,7 @@ Dashboard → Analytics provides comprehensive metrics including:
 - Clients (Client relationship management)
 - Pipeline (Deal tracking and forecasting)
 - Calendar (Scheduling and appointments)
-- Analytics (Reports and KPIs)
+- Analytics (🚧 Coming Soon - Reports and KPIs)
 - Expenses (Expense claim management)
 - Settings (User preferences and configuration)
 
