@@ -5,6 +5,8 @@ const cors = require('cors');
 const { Client } = require('@larksuiteoapi/node-sdk');
 const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
+const messageLogger = require('./message-logger');
+const analyticsAPI = require('./analytics-api');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -211,6 +213,9 @@ function queueRequest(fn) {
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Analytics API routes
+app.use('/api/analytics', analyticsAPI);
 
 // Initialize Lark client
 const larkClient = new Client({
@@ -631,6 +636,40 @@ async function handleMessage(event) {
       console.log('🎫 User in ticket creation flow, allowing short responses');
     }
 
+    // Get user information for logging
+    let userName = 'Unknown User';
+    let userInfo = null;
+    try {
+      if (sender_id && (sender_id.user_id || sender_id.open_id || sender_id.union_id)) {
+        userInfo = await getLarkUserInfo(sender_id);
+        userName = userInfo?.name || userInfo?.displayName || 'Unknown User';
+      }
+    } catch (error) {
+      console.log('⚠️ Could not fetch user info for logging:', error.message);
+    }
+
+    // Log the user message
+    const userLogData = {
+      chatId: chat_id,
+      userId: sender_id?.user_id || sender_id?.open_id || sender_id?.union_id || null,
+      userName: userName,
+      message: userMessage,
+      userMetadata: {
+        senderType: sender_type,
+        chatType: event.message.chat_type,
+        messageId: message_id,
+        userInfo: userInfo
+      },
+      messageMetadata: {
+        originalContent: content,
+        mentions: mentions,
+        isInTicketFlow: isInTicketFlow
+      }
+    };
+    
+    const userMessageLog = await messageLogger.logUserMessage(userLogData);
+    console.log('📝 User message logged with ID:', userMessageLog?.id);
+
     // Check if this is a support solution for knowledge base update
     console.log('🔍 Checking if message is a support solution...');
     const solutionProcessed = await processSupportSolution(userMessage, chat_id, sender_id, event);
@@ -639,13 +678,48 @@ async function handleMessage(event) {
     if (!solutionProcessed) {
       console.log('🤖 Generating AI response...');
       // Generate AI response with context, passing sender information
-      const aiResponse = await generateAIResponse(userMessage, chat_id, sender_id);
+      const responseStartTime = Date.now();
+      const aiResponseData = await generateAIResponse(userMessage, chat_id, sender_id);
+      const totalProcessingTime = Date.now() - responseStartTime;
+      
+      // Handle response data (could be string or object with metadata)
+      let aiResponse, responseMetadata;
+      if (typeof aiResponseData === 'object' && aiResponseData.response) {
+        aiResponse = aiResponseData.response;
+        responseMetadata = aiResponseData;
+      } else {
+        aiResponse = aiResponseData;
+        responseMetadata = {
+          responseType: 'ai_generated',
+          processingTimeMs: totalProcessingTime
+        };
+      }
+      
       console.log('✅ AI response generated:', aiResponse);
 
       console.log('📤 Sending response to Lark...');
       // Send response back to Lark
       await sendMessage(chat_id, aiResponse);
       console.log('🎉 Message sent successfully!');
+      
+      // Log the bot response with detailed metadata
+      const botLogData = {
+        chatId: chat_id,
+        message: aiResponse,
+        responseType: responseMetadata.responseType || 'ai_generated',
+        processingTimeMs: responseMetadata.processingTimeMs || totalProcessingTime,
+        knowledgeBaseHit: responseMetadata.knowledgeBaseHit || false,
+        cacheHit: responseMetadata.cacheHit || false,
+        escalatedToHuman: responseMetadata.escalatedToHuman || false,
+        messageMetadata: {
+          userMessageId: userMessageLog?.id,
+          originalUserMessage: userMessage,
+          responseMetadata: responseMetadata
+        }
+      };
+      
+      const botMessageLog = await messageLogger.logBotResponse(botLogData);
+      console.log('🤖 Bot response logged with ID:', botMessageLog?.id);
     } else {
       console.log('📚 Support solution processed, knowledge base updated!');
       console.log('🚫 Skipping AI response generation since solution was processed');
@@ -768,7 +842,14 @@ If these don't resolve your issue, I can create a support ticket for you to get 
         context.push({ role: 'user', content: userMessage });
         context.push({ role: 'assistant', content: faqResponse });
         
-        return faqResponse;
+        // Return response with metadata for logging
+        return {
+          response: faqResponse,
+          responseType: 'knowledge_base',
+          knowledgeBaseHit: true,
+          processingTimeMs: responseTime,
+          escalatedToHuman: false
+        };
       } else {
         // Second escalation or no specific FAQs - start ticket creation
         return await startTicketCreation(chatId, userMessage, category, senderId);
@@ -780,7 +861,14 @@ If these don't resolve your issue, I can create a support ticket for you to get 
     if (cachedResponse) {
       const responseTime = Date.now() - startTime;
       trackRequest(userMessage, responseTime, true);
-      return cachedResponse;
+      
+      // Return response with metadata for logging
+      return {
+        response: cachedResponse,
+        responseType: 'cached',
+        cacheHit: true,
+        processingTimeMs: responseTime
+      };
     }
     
     // Continue with normal AI response...
@@ -2142,7 +2230,7 @@ async function startTicketCreation(chatId, userMessage, category, senderId = nul
   
   return `I'll help you create a support ticket to get personalized assistance. Let me collect some details:
 
-**Step 1 of 5: Issue Title**
+**Step 1 of 3: Issue Title**
 Please provide a brief title that describes your issue (e.g., "Cannot add candidate to job", "Login page not loading"):`;
 }
 
@@ -2156,7 +2244,7 @@ async function handleTicketCreationFlow(chatId, userMessage, ticketState, sender
       ticketState.step = 'description';
       ticketCollectionState.set(chatId, ticketState);
       
-      return `**Step 2 of 5: Detailed Description**
+      return `**Step 2 of 3: Detailed Description**
 Please describe the issue in detail. What exactly happens when you try to perform the action?`;
 
     case 'description':
@@ -2164,38 +2252,18 @@ Please describe the issue in detail. What exactly happens when you try to perfor
       ticketState.step = 'steps';
       ticketCollectionState.set(chatId, ticketState);
       
-      return `**Step 3 of 5: Steps Attempted**
+      return `**Step 3 of 3: Steps Attempted**
 What steps have you already tried to resolve this issue? (e.g., "Refreshed page, cleared cache, tried different browser")`;
 
     case 'steps':
       data.stepsAttempted = userMessage.trim().split(',').map(s => s.trim());
-      ticketState.step = 'browser';
-      ticketCollectionState.set(chatId, ticketState);
       
-      return `**Step 4 of 5: Browser & Device**
-What browser and device are you using? (e.g., "Chrome on MacBook", "Safari on iPhone")`;
-
-    case 'browser':
-      const browserDevice = userMessage.trim();
-      data.browser = browserDevice.includes(' on ') ? browserDevice.split(' on ')[0] : browserDevice;
-      data.device = browserDevice.includes(' on ') ? browserDevice.split(' on ')[1] : 'Not specified';
-      ticketState.step = 'urgency';
-      ticketCollectionState.set(chatId, ticketState);
+      // Set default values for removed steps
+      data.browser = 'Not specified';
+      data.device = 'Not specified';
+      data.urgency = 'medium'; // Default urgency level
       
-      return `**Step 5 of 5: Urgency Level**
-How urgent is this issue?
-1. **Low** - Minor inconvenience, can wait
-2. **Medium** - Affecting work but has workarounds  
-3. **High** - Blocking important tasks
-4. **Critical** - System completely unusable
-
-Please reply with the number (1-4):`;
-
-    case 'urgency':
-      const urgencyMap = { '1': 'low', '2': 'medium', '3': 'high', '4': 'critical' };
-      data.urgency = urgencyMap[userMessage.trim()] || 'medium';
-      
-      // Create the ticket
+      // Create the ticket immediately after step 3
       const ticket = await createTicketFromData(chatId, data, category, ticketState.originalMessage, actualSenderId);
       
       // Clear the collection state
