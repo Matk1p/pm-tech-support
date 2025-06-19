@@ -554,11 +554,13 @@ app.post('/lark/events', async (req, res) => {
       // Handle card interaction asynchronously to respond immediately
       handleCardInteraction(event).catch(async (error) => {
         console.error('❌ Error processing card interaction:', error);
+        console.error('❌ Error stack:', error.stack);
         
         // Try to send a fallback error message to the user
         try {
           const chatId = event.context?.open_chat_id;
           if (chatId) {
+            console.log('🚨 Sending error fallback message to chat:', chatId);
             await sendMessage(chatId, 'Sorry, I encountered an issue processing your request. Please try again or type your question directly.');
           }
         } catch (fallbackError) {
@@ -4763,17 +4765,36 @@ async function sendInteractiveCard(chatId, cardContent) {
       console.log('📊 SDK Card Parameters:', JSON.stringify(cardParams, null, 2));
       console.log('📦 Card Content Preview:', JSON.stringify(cardContent, null, 2).substring(0, 500) + '...');
       
-      const messageData = await larkClient.im.message.create(cardParams);
+      console.log('🚀 About to call SDK...');
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('SDK call timeout after 10 seconds')), 10000);
+      });
+      
+      const messageData = await Promise.race([
+        larkClient.im.message.create(cardParams),
+        timeoutPromise
+      ]);
+      
+      console.log('🎯 SDK call completed');
       
       console.log('✅ SDK interactive card sending successful');
+      console.log('📊 Full SDK response:', JSON.stringify(messageData, null, 2));
       console.log('📊 SDK response code:', messageData?.code);
+      
+      console.log('🔍 Checking SDK response validity...');
+      console.log('🔍 messageData exists:', !!messageData);
+      console.log('🔍 messageData.code:', messageData?.code);
+      console.log('🔍 messageData type:', typeof messageData);
       
       if (!messageData || messageData.code !== 0) {
         const errorInfo = {
           code: messageData?.code || 'unknown',
           msg: messageData?.msg || 'No response data',
           data: messageData?.data,
-          error: messageData?.error
+          error: messageData?.error,
+          fullResponse: messageData
         };
         
         console.error('🚨 Lark SDK Error Details for card:', errorInfo);
@@ -4817,6 +4838,9 @@ async function sendInteractiveCard(chatId, cardContent) {
 
 // Handle button clicks and interactions
 async function handleCardInteraction(event) {
+  const startTime = Date.now();
+  console.log('🔥 CARD INTERACTION STARTED at', new Date().toISOString());
+  
   try {
     console.log('🎯 ========== CARD INTERACTION DEBUG ==========');
     console.log('🎯 Handling card interaction:', JSON.stringify(event, null, 2));
@@ -4858,7 +4882,10 @@ async function handleCardInteraction(event) {
     // Clean up action value (remove extra quotes if present)
     if (actionValue && typeof actionValue === 'string') {
       actionValue = actionValue.replace(/^"(.*)"$/, '$1'); // Remove surrounding quotes
+      actionValue = actionValue.replace(/\\"/g, '"'); // Remove escaped quotes
     }
+    
+    console.log('🧹 Cleaned action value:', actionValue);
     
     if (!actionValue) {
       console.log('⚠️ No action value in interaction');
@@ -5042,6 +5069,10 @@ Here's some quick guidance for this topic. For more detailed step-by-step instru
     console.error('❌ Error handling card interaction:', error);
     console.error('❌ Error stack:', error.stack);
     console.error('❌ ============================================');
+    throw error; // Re-throw to be caught by webhook handler
+  } finally {
+    const duration = Date.now() - startTime;
+    console.log('🏁 CARD INTERACTION COMPLETED in', duration, 'ms at', new Date().toISOString());
   }
 }
 
