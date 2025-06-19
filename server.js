@@ -235,9 +235,7 @@ app.use('/api/analytics', analyticsAPI);
 // Initialize Lark client with explicit domain configuration
 const larkClient = new Client({
   appId: process.env.LARK_APP_ID,
-  appSecret: process.env.LARK_APP_SECRET,
-  appType: 'self_built',
-  domain: 'larksuite'
+  appSecret: process.env.LARK_APP_SECRET
 });
 
 // Initialize OpenAI client
