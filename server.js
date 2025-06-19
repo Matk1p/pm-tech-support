@@ -214,6 +214,21 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Enhanced logging for webhook events
+app.use((req, res, next) => {
+  if (req.path === '/lark/events') {
+    console.log('🔍 ========== WEBHOOK EVENT DEBUG ==========');
+    console.log('🔍 Method:', req.method);
+    console.log('🔍 Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('🔍 Body preview:', JSON.stringify(req.body, null, 2)?.substring(0, 500) + '...');
+    console.log('🔍 Event type:', req.body?.header?.event_type || req.body?.type);
+    console.log('🔍 Has action:', !!req.body?.action);
+    console.log('🔍 Action value:', req.body?.action?.value);
+    console.log('🔍 ============================================');
+  }
+  next();
+});
+
 // Analytics API routes
 app.use('/api/analytics', analyticsAPI);
 
@@ -2141,6 +2156,58 @@ if (!process.env.VERCEL && !process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCT
   // Serverless environment - initialize on first request
   initializeForServerless();
 }
+
+// Enhanced debugging for card interactions
+app.post('/debug-cards', async (req, res) => {
+  try {
+    const { chatId, testType = 'page_selection' } = req.body;
+    
+    if (!chatId) {
+      return res.status(400).json({ error: 'chatId is required' });
+    }
+    
+    console.log('🐛 ========== CARD DEBUG TEST ==========');
+    console.log('🐛 Chat ID:', chatId);
+    console.log('🐛 Test Type:', testType);
+    console.log('🐛 SDK initialized:', !!larkClient);
+    console.log('🐛 SDK config:', {
+      appId: !!process.env.LARK_APP_ID,
+      appSecret: !!process.env.LARK_APP_SECRET
+    });
+    
+    if (testType === 'page_selection') {
+      console.log('🐛 Testing page selection card...');
+      await sendPageSelectionMessage(chatId);
+      
+      res.json({
+        success: true,
+        message: 'Page selection card sent',
+        testType: testType,
+        chatId: chatId
+      });
+    } else if (testType === 'faq_dashboard') {
+      console.log('🐛 Testing FAQ card for dashboard...');
+      await sendPageFAQs(chatId, 'dashboard');
+      
+      res.json({
+        success: true,
+        message: 'Dashboard FAQ card sent',
+        testType: testType,
+        chatId: chatId
+      });
+    } else {
+      res.status(400).json({ error: 'Unknown test type. Use page_selection or faq_dashboard' });
+    }
+    
+  } catch (error) {
+    console.error('🐛 Card debug test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
 
 // Export the app for Vercel
 module.exports = app;
