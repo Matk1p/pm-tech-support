@@ -473,6 +473,14 @@ async function addToKnowledgeBase(qaPair) {
 app.post('/lark/events', async (req, res) => {
   try {
     console.log('📥 Received Lark event:', JSON.stringify(req.body, null, 2));
+    console.log('🔍 Event Type Analysis:');
+    console.log('  - Has header:', !!req.body.header);
+    console.log('  - Header event_type:', req.body.header?.event_type);
+    console.log('  - Has legacy type:', !!req.body.type);
+    console.log('  - Legacy type:', req.body.type);
+    console.log('  - Has action:', !!req.body.action);
+    console.log('  - Has event:', !!req.body.event);
+    
     const { schema, header, event, challenge, type } = req.body;
 
     // Handle URL verification (legacy format)
@@ -512,11 +520,91 @@ app.post('/lark/events', async (req, res) => {
       } else {
         console.log('⏭️ Not a message event, skipping');
       }
-    } else {
+    } 
+    // Handle card interaction events
+    else if (header && header.event_type === 'card.action.trigger' && event) {
+      console.log('🎯 Card interaction event received from header');
+      console.log('🎯 Responding immediately to prevent timeout');
+      console.log('📋 Card event structure:', Object.keys(event));
+      
+      // Check for duplicate events
+      const eventId = header.event_id;
+      if (processedEvents.has(eventId)) {
+        console.log('🔄 Duplicate card event detected, skipping:', eventId);
+        return res.json({ success: true });
+      }
+      
+      // Mark event as processed
+      processedEvents.add(eventId);
+      
+      // Handle card interaction asynchronously to respond immediately
+      handleCardInteraction(event).catch(error => 
+        console.error('Error processing card interaction:', error)
+      );
+      
+      // Return success immediately for card interactions
+      console.log('✅ Sending immediate webhook response');
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Card interaction received',
+        timestamp: new Date().toISOString()
+      });
+    }
+    // Handle legacy card callback format
+    else if (type === 'card.action' && req.body.open_id) {
+      console.log('🎯 Legacy card interaction received');
+      console.log('🎯 Responding immediately to prevent timeout');
+      
+      handleCardInteraction(req.body).catch(error => 
+        console.error('Error processing legacy card interaction:', error)
+      );
+      
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Legacy card interaction received' 
+      });
+    }
+    // Handle direct card callback (alternative format)
+    else if (req.body.action && (req.body.open_chat_id || req.body.open_id)) {
+      console.log('🎯 Direct card callback received');
+      console.log('🎯 Responding immediately to prevent timeout');
+      
+      handleCardInteraction(req.body).catch(error => 
+        console.error('Error processing direct card interaction:', error)
+      );
+      
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Direct card interaction received' 
+      });
+    }
+    else {
       console.log('⏭️ Unknown event type or structure');
       console.log('📋 Available keys:', Object.keys(req.body));
       if (header) {
         console.log('📋 Header event type:', header.event_type);
+      }
+      
+      // Enhanced debugging for unknown events
+      console.log('🔍 DEBUGGING UNKNOWN EVENT:');
+      console.log('  - Full body structure:', JSON.stringify(req.body, null, 2));
+      console.log('  - Is this a card interaction?', !!req.body.action);
+      console.log('  - Has open_chat_id:', !!req.body.open_chat_id);
+      console.log('  - Has open_id:', !!req.body.open_id);
+      
+      // Try to handle as potential card interaction anyway
+      if (req.body.action && (req.body.open_chat_id || req.body.open_id)) {
+        console.log('🎯 ATTEMPTING to handle as card interaction...');
+        console.log('🎯 Responding immediately to prevent timeout');
+        
+        handleCardInteraction(req.body).catch(error => 
+          console.error('Error processing unknown card interaction:', error)
+        );
+        
+        return res.status(200).json({ 
+          success: true, 
+          message: 'Unknown card interaction handled' 
+        });
       }
     }
 
@@ -627,6 +715,13 @@ async function handleMessage(event) {
     // Check if user is in ticket creation flow
     const isInTicketFlow = ticketCollectionState.has(chat_id);
     
+    // Check if this is a new conversation - show page selection buttons
+    if (isNewConversation(chat_id) && !isInTicketFlow && (!userMessage || userMessage.length < 5)) {
+      console.log('🆕 New conversation detected, sending page selection buttons');
+      await sendPageSelectionMessage(chat_id);
+      return;
+    }
+    
     if (!userMessage || (userMessage.length < 2 && !isInTicketFlow)) {
       console.log('⏭️  Skipping: Empty or too short message');
       return; // Don't respond to empty messages
@@ -684,7 +779,7 @@ async function handleMessage(event) {
       
       // Handle response data (could be string or object with metadata)
       let aiResponse, responseMetadata;
-      if (typeof aiResponseData === 'object' && aiResponseData.response) {
+      if (typeof aiResponseData === 'object' && aiResponseData.response !== undefined) {
         aiResponse = aiResponseData.response;
         responseMetadata = aiResponseData;
       } else {
@@ -697,10 +792,15 @@ async function handleMessage(event) {
       
       console.log('✅ AI response generated:', aiResponse);
 
-      console.log('📤 Sending response to Lark...');
-      // Send response back to Lark
-      await sendMessage(chat_id, aiResponse);
-      console.log('🎉 Message sent successfully!');
+      // Only send text message if we have a response and it's not an interactive card
+      if (aiResponse && !responseMetadata.interactiveCard) {
+        console.log('📤 Sending response to Lark...');
+        // Send response back to Lark
+        await sendMessage(chat_id, aiResponse);
+        console.log('🎉 Message sent successfully!');
+      } else if (responseMetadata.interactiveCard) {
+        console.log('🎯 Interactive card already sent, skipping text response');
+      }
       
       // Log the bot response with detailed metadata
       const botLogData = {
@@ -760,6 +860,41 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       console.log('✅ User confirming ticket creation, starting flow...');
       const category = categorizeIssue(userMessage, context);
       return await startTicketCreation(chatId, userMessage, category, senderId);
+    }
+    
+    // Check for simple greetings or restart commands - show page selection buttons
+    const greetingPatterns = [
+      /^(hi|hello|hey|help|start|menu|options)$/i,
+      /^(good morning|good afternoon|good evening)$/i,
+      /^(how can|what can).*help/i,
+      /^need help$/i,
+      /^show.*options$/i,
+      /^main menu$/i,
+      /^restart$/i,
+      /^reset$/i,
+      /^begin$/i,
+      /^page.*selection$/i,
+      /^show.*pages$/i
+    ];
+    
+    const isGreeting = greetingPatterns.some(pattern => pattern.test(userMessage.trim()));
+    
+    // Show page buttons for greetings (new conversations) or restart commands (existing conversations)
+    if (isGreeting && (context.length === 0 || /^(restart|reset|main menu|page.*selection|show.*pages)$/i.test(userMessage.trim()))) {
+      console.log('👋 Greeting/restart detected, sending page selection buttons');
+      
+      // Clear user interaction state to reset the flow
+      userInteractionState.delete(chatId);
+      
+      await sendPageSelectionMessage(chatId);
+      
+      const responseTime = Date.now() - startTime;
+      return {
+        response: '', // Empty response since we sent interactive card
+        responseType: 'greeting_buttons',
+        processingTimeMs: responseTime,
+        interactiveCard: true
+      };
     }
     
     // Check for escalation triggers
@@ -1865,6 +2000,88 @@ app.post('/reload-knowledge-base', async (req, res) => {
   }
 });
 
+// Test interactive page selection endpoint
+app.post('/test-page-buttons', async (req, res) => {
+  try {
+    const { chatId } = req.body;
+    
+    if (!chatId) {
+      return res.status(400).json({ error: 'chatId is required' });
+    }
+    
+    console.log('🧪 Testing page selection buttons for chat:', chatId);
+    await sendPageSelectionMessage(chatId);
+    
+    res.json({
+      success: true,
+      message: 'Page selection buttons sent successfully',
+      chatId: chatId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Test page buttons error:', error);
+    res.status(500).json({ 
+      error: 'Failed to send page buttons',
+      details: error.message 
+    });
+  }
+});
+
+// Test simple card endpoint
+app.post('/test-simple-card', async (req, res) => {
+  try {
+    const { chatId } = req.body;
+    
+    if (!chatId) {
+      return res.status(400).json({ error: 'chatId is required' });
+    }
+    
+    console.log('🧪 Testing simple card for chat:', chatId);
+    
+    // Send a very simple card to test basic functionality
+    const simpleCard = {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "Simple test card",
+            "tag": "plain_text"
+          }
+        },
+        {
+          "tag": "action",
+          "actions": [
+            {
+              "tag": "button",
+              "text": {
+                "content": "Test Button",
+                "tag": "plain_text"
+              },
+              "type": "primary",
+              "value": "test_action"
+            }
+          ]
+        }
+      ]
+    };
+    
+    await sendInteractiveCard(chatId, simpleCard);
+    
+    res.json({
+      success: true,
+      message: 'Simple test card sent successfully',
+      chatId: chatId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Test simple card error:', error);
+    res.status(500).json({ 
+      error: 'Failed to send simple card',
+      details: error.message 
+    });
+  }
+});
+
 // Get current loaded knowledge base content
 app.get('/current-knowledge-base', (req, res) => {
   try {
@@ -2924,3 +3141,457 @@ Your solution has been saved to the knowledge base and will help resolve similar
     return false;
   }
 } 
+
+// Main page buttons and FAQs configuration
+const MAIN_PAGES = {
+  'dashboard': {
+    name: '📊 Dashboard',
+    description: 'Central hub with analytics and KPIs',
+    faqs: [
+      'How to view staff performance metrics?',
+      'How to filter data by time period?',
+      'How to understand pipeline values?',
+      'How to access role-based analytics?'
+    ]
+  },
+  'jobs': {
+    name: '💼 Jobs',
+    description: 'Job management and candidate assignment',
+    faqs: [
+      'How to create a new job posting?',
+      'How to assign candidates to jobs?',
+      'How to track job status and pipeline?',
+      'How to manage job budgets and percentages?'
+    ]
+  },
+  'candidates': {
+    name: '👥 Candidates',
+    description: 'Candidate management and profiles',
+    faqs: [
+      'How to add a new candidate?',
+      'How to upload and parse resumes?',
+      'How to assign candidates to jobs?',
+      'How to track candidate communication history?'
+    ]
+  },
+  'clients': {
+    name: '🏢 Clients',
+    description: 'Client relationship management',
+    faqs: [
+      'How to add a new client?',
+      'How to organize parent company relationships?',
+      'How to track client job history?',
+      'How to manage client financial values?'
+    ]
+  },
+  'calendar': {
+    name: '📅 Calendar',
+    description: 'Scheduling and event management',
+    faqs: [
+      'How to schedule a candidate meeting?',
+      'How to request leave approval?',
+      'How to create client meetings?',
+      'How to view team calendar events?'
+    ]
+  },
+  'claims': {
+    name: '💰 Claims',
+    description: 'Expense claims and approvals',
+    faqs: [
+      'How to submit an expense claim?',
+      'How to upload receipt attachments?',
+      'How to approve claims as a manager?',
+      'How to track claim status and history?'
+    ]
+  }
+};
+
+// Store user interaction state
+const userInteractionState = new Map(); // chatId -> { step, selectedPage, awaiting }
+
+// Send interactive page selection message
+async function sendPageSelectionMessage(chatId) {
+  try {
+    console.log('📋 Sending page selection message to chat:', chatId);
+    
+    // Create interactive card with page buttons
+    const cardContent = {
+      "config": {
+        "wide_screen_mode": true
+      },
+      "header": {
+        "template": "blue",
+        "title": {
+          "content": "🤖 Welcome to PM-Next Support Bot",
+          "tag": "plain_text"
+        }
+      },
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "Please select the page you need help with:",
+            "tag": "plain_text"
+          }
+        },
+        {
+          "tag": "hr"
+        },
+        {
+          "tag": "action",
+          "actions": Object.keys(MAIN_PAGES).slice(0, 3).map(pageKey => ({
+            "tag": "button",
+            "text": {
+              "content": MAIN_PAGES[pageKey].name,
+              "tag": "plain_text"
+            },
+            "type": "primary",
+            "value": pageKey
+          }))
+        },
+        {
+          "tag": "action",
+          "actions": Object.keys(MAIN_PAGES).slice(3, 6).map(pageKey => ({
+            "tag": "button",
+            "text": {
+              "content": MAIN_PAGES[pageKey].name,
+              "tag": "plain_text"
+            },
+            "type": "primary",
+            "value": pageKey
+          }))
+        },
+        {
+          "tag": "hr"
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "Or you can ask me anything directly about PM-Next!",
+            "tag": "plain_text"
+          }
+        }
+      ]
+    };
+
+    await sendInteractiveCard(chatId, cardContent);
+    
+    // Set user state to awaiting page selection
+    userInteractionState.set(chatId, {
+      step: 'awaiting_page_selection',
+      selectedPage: null,
+      awaiting: true
+    });
+    
+    console.log('✅ Page selection message sent successfully');
+  } catch (error) {
+    console.error('❌ Error sending page selection message:', error);
+    // Fallback to text message
+    await sendMessage(chatId, "Welcome to PM-Next Support Bot! 🤖\n\nPlease let me know which page you need help with:\n📊 Dashboard\n💼 Jobs\n👥 Candidates\n🏢 Clients\n📅 Calendar\n💰 Claims\n\nOr ask me anything about PM-Next directly!");
+  }
+}
+
+// Send FAQ options for selected page
+async function sendPageFAQs(chatId, pageKey) {
+  try {
+    console.log('📋 Sending FAQ options for page:', pageKey);
+    
+    const page = MAIN_PAGES[pageKey];
+    if (!page) {
+      throw new Error(`Unknown page: ${pageKey}`);
+    }
+    
+    const cardContent = {
+      "config": {
+        "wide_screen_mode": true
+      },
+      "header": {
+        "template": "green",
+        "title": {
+          "content": `${page.name} - FAQs`,
+          "tag": "plain_text"
+        }
+      },
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": `Here are common questions about ${page.description}:`,
+            "tag": "plain_text"
+          }
+        },
+        {
+          "tag": "hr"
+        },
+        ...page.faqs.map((faq, index) => ({
+          "tag": "action",
+          "actions": [{
+            "tag": "button",
+            "text": {
+              "content": faq,
+              "tag": "plain_text"
+            },
+            "type": "default",
+            "value": `faq_${pageKey}_${index}`
+          }]
+        })),
+        {
+          "tag": "hr"
+        },
+        {
+          "tag": "action",
+          "actions": [
+            {
+              "tag": "button",
+              "text": {
+                "content": "🔙 Back to Page Selection",
+                "tag": "plain_text"
+              },
+              "type": "default",
+              "value": "back_to_pages"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "💬 Ask Custom Question",
+                "tag": "plain_text"
+              },
+              "type": "primary",
+              "value": "custom_question"
+            }
+          ]
+        }
+      ]
+    };
+
+    await sendInteractiveCard(chatId, cardContent);
+    
+    // Update user state
+    userInteractionState.set(chatId, {
+      step: 'awaiting_faq_selection',
+      selectedPage: pageKey,
+      awaiting: true
+    });
+    
+    console.log('✅ FAQ options sent successfully');
+  } catch (error) {
+    console.error('❌ Error sending FAQ options:', error);
+    // Fallback to text message
+    const page = MAIN_PAGES[pageKey];
+    let message = `${page.name} - Frequently Asked Questions:\n\n`;
+    page.faqs.forEach((faq, index) => {
+      message += `${index + 1}. ${faq}\n`;
+    });
+    message += '\nPlease type your question or ask me anything about this page!';
+    await sendMessage(chatId, message);
+  }
+}
+
+// Send interactive card message
+async function sendInteractiveCard(chatId, cardContent) {
+  try {
+    console.log('📨 Sending interactive card to chat:', chatId);
+    
+    // First, get the access token
+    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET
+      })
+    });
+
+    const tokenData = await tokenResponse.json();
+    
+    if (tokenData.code !== 0) {
+      throw new Error(`Failed to get access token: ${tokenData.msg}`);
+    }
+
+    const accessToken = tokenData.tenant_access_token;
+    console.log('🔑 Got access token for interactive card');
+
+    // Detect the ID type based on the chat ID format
+    let idType = 'chat_id';
+    if (chatId.startsWith('ou_')) {
+      idType = 'user_id';
+    } else if (chatId.startsWith('oc_')) {
+      idType = 'chat_id';
+    } else if (chatId.startsWith('og_')) {
+      idType = 'chat_id';
+    }
+
+    const messagePayload = {
+      receive_id: chatId,
+      msg_type: 'interactive',
+      content: JSON.stringify(cardContent),
+      uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    };
+
+    console.log('📦 Interactive card payload:', JSON.stringify(messagePayload, null, 2));
+
+    const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${idType}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      },
+      body: JSON.stringify(messagePayload)
+    });
+
+    const messageData = await messageResponse.json();
+    
+    console.log('📊 Lark API response status for card:', messageResponse.status);
+    console.log('📊 Lark API response data for card:', JSON.stringify(messageData, null, 2));
+    
+    if (messageData.code !== 0) {
+      console.error('🚨 Lark API Error Details for card:', {
+        code: messageData.code,
+        msg: messageData.msg,
+        data: messageData.data,
+        error: messageData.error
+      });
+      throw new Error(`Failed to send interactive card: ${messageData.msg || 'Unknown error'}`);
+    }
+
+    console.log('✅ Interactive card sent successfully:', messageData);
+  } catch (error) {
+    console.error('❌ Error sending interactive card to Lark:', error);
+    console.error('📋 Card error details:', error.message);
+    throw error;
+  }
+}
+
+// Handle button clicks and interactions
+async function handleCardInteraction(event) {
+  try {
+    console.log('🎯 ========== CARD INTERACTION DEBUG ==========');
+    console.log('🎯 Handling card interaction:', JSON.stringify(event, null, 2));
+    console.log('🎯 Event keys:', Object.keys(event));
+    console.log('🎯 Event type:', typeof event);
+    
+    // Handle different event formats
+    let chatId, actionValue, userId;
+    
+    if (event.open_chat_id) {
+      // Standard format
+      chatId = event.open_chat_id;
+      userId = event.open_id || event.user_id;
+      actionValue = event.action?.value;
+    } else if (event.context) {
+      // Lark webhook format with context and operator
+      chatId = event.context.open_chat_id;
+      userId = event.operator?.open_id || event.operator?.user_id;
+      actionValue = event.action?.value;
+    } else {
+      console.log('⚠️ Unknown card interaction format');
+      return;
+    }
+    
+    // Clean up action value (remove extra quotes if present)
+    if (actionValue && typeof actionValue === 'string') {
+      actionValue = actionValue.replace(/^"(.*)"$/, '$1'); // Remove surrounding quotes
+    }
+    
+    if (!actionValue) {
+      console.log('⚠️ No action value in interaction');
+      console.log('📋 Available keys:', Object.keys(event));
+      console.log('📋 Action object:', event.action);
+      return;
+    }
+    
+    console.log('🔍 Processing action:', actionValue);
+    console.log('💬 Chat ID:', chatId);
+    console.log('👤 User ID:', userId);
+    
+    // Handle different button actions
+    if (Object.keys(MAIN_PAGES).includes(actionValue)) {
+      // Page selection
+      console.log('📄 Page selected:', actionValue);
+      await sendPageFAQs(chatId, actionValue);
+    } else if (actionValue.startsWith('faq_')) {
+      // FAQ selection
+      console.log('🔍 ========== FAQ BUTTON DEBUG ==========');
+      console.log('🔍 Raw action value:', actionValue);
+      
+      const parts = actionValue.split('_');
+      console.log('🔍 Split parts:', parts);
+      
+      const [, pageKey, faqIndex] = parts;
+      console.log('🔍 Page key:', pageKey);
+      console.log('🔍 FAQ index:', faqIndex);
+      
+      const page = MAIN_PAGES[pageKey];
+      console.log('🔍 Page found:', !!page);
+      
+      if (!page) {
+        console.error('❌ Page not found for key:', pageKey);
+        await sendMessage(chatId, "Sorry, I couldn't find that page. Please try again.");
+        return;
+      }
+      
+      const faq = page.faqs[parseInt(faqIndex)];
+      console.log('🔍 FAQ found:', !!faq);
+      console.log('🔍 FAQ text:', faq);
+      
+      if (!faq) {
+        console.error('❌ FAQ not found for index:', faqIndex);
+        await sendMessage(chatId, "Sorry, I couldn't find that FAQ. Please try again.");
+        return;
+      }
+      
+      console.log('❓ FAQ selected:', faq);
+      console.log('🤖 Generating AI response for FAQ...');
+      
+      try {
+        // Generate AI response for the FAQ
+        const faqResponse = await generateAIResponse(faq, chatId, { open_id: userId });
+        console.log('✅ FAQ response generated successfully');
+        console.log('📝 Response type:', typeof faqResponse);
+        console.log('📝 Response keys:', Object.keys(faqResponse || {}));
+        
+        const responseText = faqResponse.response || faqResponse;
+        console.log('📤 Sending FAQ response...');
+        await sendMessage(chatId, `**${faq}**\n\n${responseText}`);
+        console.log('✅ FAQ response sent successfully');
+        
+        // Reset user state to allow normal bot interaction
+        userInteractionState.delete(chatId);
+      } catch (error) {
+        console.error('❌ ========== FAQ RESPONSE ERROR ==========');
+        console.error('❌ Error generating FAQ response:', error);
+        console.error('❌ Error stack:', error.stack);
+        await sendMessage(chatId, "Sorry, I encountered an error processing your FAQ. Please try asking me directly!");
+      }
+      console.log('🔍 ======================================');
+    } else if (actionValue === 'back_to_pages') {
+      // Back to page selection
+      console.log('🔙 Back to page selection');
+      await sendPageSelectionMessage(chatId);
+    } else if (actionValue === 'custom_question') {
+      // Enable custom question mode
+      console.log('💬 Custom question mode enabled');
+      await sendMessage(chatId, "Please go ahead and ask me anything about PM-Next! I'm here to help. 🤖");
+      
+      // Reset user state to allow normal bot interaction
+      userInteractionState.delete(chatId);
+    }
+    
+  } catch (error) {
+    console.error('❌ ========== CARD INTERACTION ERROR ==========');
+    console.error('❌ Error handling card interaction:', error);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ ============================================');
+  }
+}
+
+// Check if user is new to the conversation
+function isNewConversation(chatId) {
+  // Check if user has any previous conversation context
+  const hasContext = conversationContext.has(chatId) && conversationContext.get(chatId).length > 0;
+  const hasInteractionState = userInteractionState.has(chatId);
+  
+  return !hasContext && !hasInteractionState;
+}
