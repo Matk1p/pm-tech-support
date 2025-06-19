@@ -89,17 +89,22 @@ const ISSUE_CATEGORIES = {
 
 // FAQ responses by category
 const FAQ_RESPONSES = {
-  candidate_management: `**Candidate Management FAQs:**
+  candidate_management: `**Candidate Management Help:**
 
-• **Add Candidate**: Dashboard → Candidates → Add New → fill form → Save
-• **Upload Resume**: Drag & drop or click upload (AI parsing enabled)
-• **Link to Job**: Candidate profile → Applications tab → Add to job
-• **Update Status**: Use status dropdown in candidate profile
+**Adding Candidates:**
+• Navigate to the Candidates section
+• Click the "Add New" or "+" button
+• Fill in the required fields (name, email, phone)
+• Upload resume if available
+• Save the candidate profile
 
-**Common Issues:**
-• Resume not parsing? Check file format (PDF/DOC/DOCX) and size (<10MB)
-• Candidate not saving? Ensure required fields are filled
-• Can't find candidate? Use search bar or check filters`,
+**Common Issues & Solutions:**
+• **Can't add candidate?** Check that all required fields are filled
+• **Resume not uploading?** Ensure file is PDF, DOC, or DOCX format and under 10MB
+• **Page not responding?** Try refreshing the browser or clearing cache
+• **Getting error messages?** Note the exact error text to help with troubleshooting
+
+**If you're still having trouble, I can create a support ticket to get you personalized help from our technical team.**`,
 
   job_management: `**Job Management FAQs:**
 
@@ -125,17 +130,21 @@ const FAQ_RESPONSES = {
 • Clear cookies and cache if login loops
 • Check internet connection stability`,
 
-  general: `**General PM-Next FAQs:**
+  general: `**General PM-Next Support:**
 
-• **Navigation**: Use Dashboard menu → select module
-• **Search**: Global search bar finds candidates, jobs, clients
-• **Help**: Look for ? icons throughout the system
-• **Performance**: Close unused tabs, clear cache
+I'm here to help you with any issues you're experiencing in PM-Next. For the best assistance, please let me know:
 
-**Common Issues:**
-• Page loading slowly? Check internet speed and close other tabs
-• Feature not working? Try refreshing the page
-• Data not syncing? Check internet connection`
+• **What specific feature** you're trying to use
+• **What exactly happens** when you try to perform the action
+• **Any error messages** you see
+
+**Common Quick Fixes:**
+• Try refreshing your browser page
+• Clear your browser cache and cookies
+• Make sure you have a stable internet connection
+• Try using a different browser (Chrome, Firefox, Safari, Edge)
+
+**If these don't help, I can create a support ticket to get you personalized assistance from our technical team.**`
 };
 
 // Common question patterns for caching
@@ -830,7 +839,7 @@ async function handleMessage(event) {
       if (aiResponse && !responseMetadata.interactiveCard) {
         console.log('📤 Sending response to Lark...');
         // Send response back to Lark
-        await sendMessage(chat_id, aiResponse);
+        await sendMessage(chatId, aiResponse);
         console.log('🎉 Message sent successfully!');
       } else if (responseMetadata.interactiveCard) {
         console.log('🎯 Interactive card already sent, skipping text response');
@@ -838,7 +847,7 @@ async function handleMessage(event) {
       
       // Log the bot response with detailed metadata
       const botLogData = {
-        chatId: chat_id,
+        chatId: chatId,
         message: aiResponse,
         responseType: responseMetadata.responseType || 'ai_generated',
         processingTimeMs: responseMetadata.processingTimeMs || totalProcessingTime,
@@ -1005,7 +1014,7 @@ Or ask me anything about PM-Next directly!`;
     // Check for escalation triggers
     console.log('🎯 Checking escalation triggers for message:', userMessage);
     const shouldEscalate = shouldEscalateToTicket(context, userMessage);
-    const category = categorizeIssue(userMessage);
+    const category = categorizeIssue(userMessage, context);
     console.log('📊 Escalation result:', shouldEscalate, 'Category:', category);
     
     if (shouldEscalate) {
@@ -1014,7 +1023,7 @@ Or ask me anything about PM-Next directly!`;
       // Check for direct escalation phrases that should skip FAQs
       const directEscalationPhrases = [
         // Existing direct escalation phrases
-        /still.*(not|doesn't|don't).*(work|working)/i,
+        /still.*(not|doesn't|don't|doesnt).*(work|working)/i,
         /escalate.*to.*(support|team|human)/i,
         /can.*i.*escalate/i,
         /create.*ticket/i,
@@ -1055,20 +1064,53 @@ Or ask me anything about PM-Next directly!`;
       
       const isDirectEscalation = directEscalationPhrases.some(phrase => phrase.test(userMessage));
       
-      if (isDirectEscalation) {
-        // Direct escalation - go straight to ticket creation
-        console.log('🎫 Direct escalation detected, starting ticket creation');
-        return await startTicketCreation(chatId, userMessage, category, senderId);
+      // Check if we've already shown FAQs for ANY category in recent context
+      const hasShownAnyFAQs = context.some(msg => 
+        msg.role === 'assistant' && 
+        msg.content && 
+        msg.content.toLowerCase().includes('faqs:')
+      );
+      
+      // If user indicates something "still doesn't work" after we've shown FAQs, escalate immediately
+      const isFollowUpFailure = /still.*(not|doesn't|don't|doesnt).*(work|working|help|helpful)/i.test(userMessage);
+      
+      if (isDirectEscalation || (hasShownAnyFAQs && isFollowUpFailure)) {
+        // Direct escalation or follow-up after FAQ failure - go straight to ticket creation
+        console.log('🎫 Direct escalation or FAQ follow-up failure detected, starting ticket creation');
+        
+        // Use the original category from conversation context if the current message is generic
+        let escalationCategory = category;
+        if (category === 'general' && hasShownAnyFAQs) {
+          // Look for the category from recent FAQ responses
+          const recentFAQMessage = context.slice().reverse().find(msg => 
+            msg.role === 'assistant' && 
+            msg.content && 
+            msg.content.toLowerCase().includes('faqs:')
+          );
+          
+          if (recentFAQMessage) {
+            if (recentFAQMessage.content.toLowerCase().includes('candidate management')) {
+              escalationCategory = 'candidate_management';
+            } else if (recentFAQMessage.content.toLowerCase().includes('job management')) {
+              escalationCategory = 'job_management';
+            } else if (recentFAQMessage.content.toLowerCase().includes('login')) {
+              escalationCategory = 'authentication';
+            }
+          }
+        }
+        
+        console.log('📂 Using escalation category:', escalationCategory);
+        return await startTicketCreation(chatId, userMessage, escalationCategory, senderId);
       }
       
-      // Check if we've already shown FAQs for this category
-      const hasShownFAQs = context.some(msg => 
+      // Check if we've already shown FAQs for this specific category
+      const hasShownSpecificCategoryFAQs = context.some(msg => 
         msg.content && msg.content.toLowerCase().includes('faqs:') && 
         msg.content.toLowerCase().includes(category.replace('_', ' ').toLowerCase())
       );
       
-      if (!hasShownFAQs && FAQ_RESPONSES[category]) {
-        // First escalation - show relevant FAQs
+      if (!hasShownSpecificCategoryFAQs && FAQ_RESPONSES[category] && category !== 'general') {
+        // First escalation - show relevant FAQs only for specific categories (not general)
         const faqResponse = `I understand you're having trouble. Let me share some relevant FAQs that might help:
 
 ${FAQ_RESPONSES[category]}
@@ -1091,7 +1133,8 @@ If these don't resolve your issue, I can create a support ticket for you to get 
           escalatedToHuman: false
         };
       } else {
-        // Second escalation or no specific FAQs - start ticket creation
+        // Second escalation, general category, or no specific FAQs - start ticket creation
+        console.log('🎫 Second escalation or general category, starting ticket creation immediately');
         return await startTicketCreation(chatId, userMessage, category, senderId);
       }
     }
