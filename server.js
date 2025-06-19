@@ -2293,6 +2293,56 @@ app.post('/test-basic-message', async (req, res) => {
   }
 });
 
+// Test hybrid knowledge FAQ system
+app.post('/test-hybrid-faq', async (req, res) => {
+  try {
+    const { pageKey = 'dashboard', faqQuestion = 'How to view staff performance metrics?' } = req.body;
+    
+    console.log('🧪 Testing hybrid knowledge FAQ system');
+    console.log('🧪 Page:', pageKey);
+    console.log('🧪 Question:', faqQuestion);
+    
+    // Test the hybrid knowledge FAQ function
+    const startTime = Date.now();
+    const answer = await getFastFAQAnswer(pageKey, faqQuestion);
+    const processingTime = Date.now() - startTime;
+    
+    // Check knowledge base status
+    await ensureKnowledgeBaseInitialized();
+    const kbStats = {
+      length: PM_NEXT_KNOWLEDGE.length,
+      qaCount: (PM_NEXT_KNOWLEDGE.match(/### Q:/g) || []).length,
+      hasDatabase: PM_NEXT_KNOWLEDGE.includes('Additional Support Solutions'),
+      sampleContent: PM_NEXT_KNOWLEDGE.substring(0, 200) + '...'
+    };
+    
+    res.json({
+      success: true,
+      message: 'Hybrid FAQ test completed',
+      results: {
+        pageKey,
+        faqQuestion,
+        answer: answer ? answer.substring(0, 500) + (answer.length > 500 ? '...' : '') : null,
+        fullAnswerLength: answer ? answer.length : 0,
+        processingTimeMs: processingTime,
+        usedKnowledgeBase: answer ? answer.includes('Based on our PM-Next knowledge base') : false,
+        usedFallback: answer ? !answer.includes('Based on our PM-Next knowledge base') : true
+      },
+      knowledgeBaseStats: kbStats,
+      environment: process.env.VERCEL ? 'Vercel' : 'Local',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Hybrid FAQ test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Test serverless optimized card with enhanced error handling
 app.post('/test-serverless-optimized', async (req, res) => {
   try {
@@ -3589,6 +3639,733 @@ const MAIN_PAGES = {
 // Store user interaction state
 const userInteractionState = new Map(); // chatId -> { step, selectedPage, awaiting }
 
+// Fast FAQ answers for serverless performance
+const FAST_FAQ_ANSWERS = {
+  dashboard: {
+    'How to view staff performance metrics?': `**Viewing Staff Performance Metrics:**
+
+1. **Go to Dashboard** → Main navigation
+2. **Select Analytics Tab** → Staff Performance section
+3. **Choose Time Period** → Use date filters (Last 7 days, 30 days, etc.)
+4. **View Key Metrics:**
+   - Total placements made
+   - Revenue generated
+   - Client meetings completed
+   - Candidate submissions
+
+5. **Detailed Reports** → Click on any staff member for individual breakdown
+6. **Export Data** → Use "Export" button for Excel/PDF reports
+
+💡 **Tip:** Use the comparison view to compare multiple staff members side by side.`,
+
+    'How to filter data by time period?': `**Filtering Data by Time Period:**
+
+1. **Date Filter Controls** → Top right of Dashboard
+2. **Quick Filters:**
+   - Today
+   - Last 7 days
+   - Last 30 days
+   - This Month
+   - Last Month
+   - This Quarter
+
+3. **Custom Date Range:**
+   - Click "Custom Range"
+   - Select start and end dates
+   - Apply filter
+
+4. **Save Filters** → Use "Save View" to remember your preferred settings
+5. **Reset Filters** → Click "Clear All" to return to default view
+
+📊 All charts and metrics will automatically update based on your selected time period.`,
+
+    'How to understand pipeline values?': `**Understanding Pipeline Values:**
+
+**Pipeline Value = Total potential revenue from active opportunities**
+
+1. **Pipeline Components:**
+   - Active job opportunities
+   - Expected placement fees
+   - Probability of success
+   - Expected close dates
+
+2. **Value Calculation:**
+   - Job Value × Success Probability = Weighted Pipeline Value
+   - Example: $50,000 job × 75% probability = $37,500 pipeline value
+
+3. **Pipeline Stages:**
+   - Early (0-25% probability)
+   - Developing (25-50%)
+   - Advanced (50-75%)
+   - Near Close (75-90%)
+   - Won/Lost (100%/0%)
+
+4. **Viewing Pipeline:**
+   - Dashboard → Pipeline Widget
+   - Color-coded by stage
+   - Drill down for details
+
+💰 **Focus on high-value, high-probability opportunities for best results.**`,
+
+    'How to access role-based analytics?': `**Accessing Role-Based Analytics:**
+
+**Your analytics depend on your role permissions:**
+
+1. **Admin Users:**
+   - Full company analytics
+   - All staff performance
+   - Financial reports
+   - System usage stats
+
+2. **Managers:**
+   - Team performance metrics
+   - Assigned client analytics
+   - Budget vs actual reports
+   - Staff under management
+
+3. **Consultants:**
+   - Personal performance only
+   - Own client/candidate metrics
+   - Personal targets vs actual
+   - Commission tracking
+
+4. **To Access:**
+   - Dashboard → Analytics section
+   - Available reports show based on your role
+   - Request additional access from your manager
+
+🔐 **Note:** If you need access to additional analytics, contact your system administrator.`
+  },
+  
+  jobs: {
+    'How to create a new job posting?': `**Creating a New Job Posting:**
+
+1. **Navigate:** Dashboard → Jobs → "Create New Job"
+2. **Basic Information:**
+   - Job Title
+   - Client/Company
+   - Location (Remote/Hybrid/Office)
+   - Salary Range
+
+3. **Job Details:**
+   - Job Description
+   - Required Skills
+   - Experience Level
+   - Education Requirements
+
+4. **Commercial Details:**
+   - Fee Percentage
+   - Expected Start Date
+   - Job Priority Level
+
+5. **Save & Activate:**
+   - Click "Save as Draft" for later editing
+   - Click "Publish" to make active
+
+✅ **Tip:** Use job templates for similar positions to save time!`,
+
+    'How to assign candidates to jobs?': `**Assigning Candidates to Jobs:**
+
+**Method 1 - From Job Page:**
+1. Open the job → "Candidates" tab
+2. Click "Add Candidate"
+3. Search by name, skills, or location
+4. Select candidate(s) → Click "Assign"
+
+**Method 2 - From Candidate Page:**
+1. Open candidate profile → "Jobs" tab
+2. Click "Add to Job"
+3. Search for relevant jobs
+4. Select job → Click "Assign"
+
+**Method 3 - Bulk Assignment:**
+1. Candidates page → Select multiple candidates
+2. Bulk Actions → "Assign to Job"
+3. Choose job from dropdown
+
+👥 **Track assignment status in both job and candidate views.**`,
+
+    'How to track job status and pipeline?': `**Tracking Job Status & Pipeline:**
+
+**Job Statuses:**
+- 📝 **Draft** - Being prepared
+- 🟢 **Active** - Currently recruiting
+- 🟡 **On Hold** - Temporarily paused
+- 🔴 **Cancelled** - No longer required
+- ✅ **Filled** - Successfully completed
+
+**Pipeline Tracking:**
+1. **Jobs Dashboard** → Pipeline view
+2. **Status Columns** → Drag jobs between stages
+3. **Progress Indicators** → Visual progress bars
+4. **Time Tracking** → Days in each stage
+
+**Reports Available:**
+- Time to fill analysis
+- Success rate by consultant
+- Pipeline value by stage
+- Client satisfaction scores
+
+📊 **Use filters to focus on specific job types, clients, or time periods.**`,
+
+    'How to manage job budgets and percentages?': `**Managing Job Budgets & Percentages:**
+
+**Setting Fee Percentages:**
+1. Job Details → "Commercial" section
+2. Set fee percentage (typically 15-25%)
+3. Choose payment terms (30/60/90 days)
+4. Add any special conditions
+
+**Budget Tracking:**
+- **Expected Revenue** = Salary × Fee %
+- **Actual Costs** = Time spent × hourly rate
+- **Profit Margin** = Revenue - Costs
+
+**Managing Budgets:**
+1. **Set Targets** → Expected hours to fill
+2. **Track Progress** → Time spent vs. budget
+3. **Monitor ROI** → Revenue per hour invested
+4. **Adjust Strategy** → If over/under budget
+
+💰 **Best Practice:** Review budget vs. actual monthly to optimize future estimates.`
+  },
+
+  candidates: {
+    'How to add a new candidate?': `**Adding a New Candidate:**
+
+1. **Navigate:** Dashboard → Candidates → "Add New Candidate"
+2. **Personal Details:**
+   - Full Name
+   - Email & Phone
+   - Location
+   - LinkedIn Profile
+
+3. **Professional Info:**
+   - Current Position
+   - Current Employer
+   - Salary Expectations
+   - Notice Period
+
+4. **Upload Resume:**
+   - Drag & drop or click to upload
+   - AI will auto-parse information
+   - Review and correct any errors
+
+5. **Skills & Preferences:**
+   - Add key skills
+   - Set job preferences
+   - Location preferences
+
+6. **Save & Tag:**
+   - Save candidate
+   - Add relevant tags for easy searching
+
+🚀 **The system will auto-suggest matching jobs once saved!**`,
+
+    'How to upload and parse resumes?': `**Uploading & Parsing Resumes:**
+
+**Upload Methods:**
+1. **Drag & Drop** → Simply drag PDF/DOC files to upload area
+2. **Click Upload** → Browse and select files
+3. **Bulk Upload** → Select multiple files at once
+
+**Supported Formats:**
+- PDF (recommended)
+- DOC/DOCX
+- TXT files
+
+**AI Parsing Features:**
+- ✅ **Contact Information** → Auto-extracted
+- ✅ **Work Experience** → Job titles, companies, dates
+- ✅ **Education** → Degrees, institutions, years
+- ✅ **Skills** → Technical and soft skills
+- ✅ **Certifications** → Professional qualifications
+
+**After Parsing:**
+1. **Review Information** → Check for accuracy
+2. **Edit if Needed** → Correct any mistakes
+3. **Add Missing Info** → Fill gaps not captured
+4. **Save Changes** → Finalize the profile
+
+⚠️ **Always review AI-parsed data for accuracy before saving.**`,
+
+    'How to assign candidates to jobs?': `**Assigning Candidates to Jobs:**
+
+**Quick Assignment:**
+1. **From Candidate Profile** → "Jobs" tab
+2. **Click "Add to Job"** → Search for relevant positions
+3. **Select Job** → Choose appropriate position
+4. **Set Status** → Applied/Submitted/Interviewed
+5. **Add Notes** → Reason for assignment
+
+**Bulk Assignment:**
+1. **Candidates List** → Select multiple candidates
+2. **Bulk Actions** → "Assign to Job"
+3. **Choose Job** → Select from dropdown
+4. **Apply to All** → Confirm assignment
+
+**Smart Matching:**
+- System suggests best-fit jobs automatically
+- Match score based on skills, location, salary
+- Click "Auto-Suggest" for recommendations
+
+**Track Assignments:**
+- View in candidate profile → Applications tab
+- Monitor progress through interview stages
+- Update status as process advances
+
+🎯 **Use matching scores to prioritize the best candidate-job fits.**`,
+
+    'How to track candidate communication history?': `**Tracking Communication History:**
+
+**Communication Types Tracked:**
+- 📧 **Emails** → Sent/received
+- 📞 **Phone Calls** → Logged with notes
+- 💬 **Messages** → Internal team communications
+- 📅 **Meetings** → Interview/consultation records
+
+**Viewing History:**
+1. **Candidate Profile** → "Communications" tab
+2. **Filter by Type** → Email, calls, meetings, notes
+3. **Sort by Date** → Most recent first
+4. **Search Content** → Find specific conversations
+
+**Adding Communications:**
+1. **Quick Actions** → Email/Call/Note buttons
+2. **Log Details** → Date, time, type, notes
+3. **Tag Topics** → Interview, offer, feedback, etc.
+4. **Set Reminders** → For follow-up actions
+
+**Team Visibility:**
+- All team communications visible
+- Private notes (admin only)
+- Client communications tracked
+- Interview feedback recorded
+
+📝 **Best Practice:** Log all candidate interactions immediately for complete history.**`
+  },
+
+  clients: {
+    'How to add a new client?': `**Adding a New Client:**
+
+1. **Navigate:** Dashboard → Clients → "Add New Client"
+2. **Company Information:**
+   - Company Name
+   - Industry Sector
+   - Company Size
+   - Website URL
+
+3. **Primary Contact:**
+   - Contact Name & Title
+   - Email & Phone
+   - LinkedIn Profile
+   - Preferred Communication Method
+
+4. **Business Details:**
+   - Annual Revenue (if known)
+   - Typical Hiring Volume
+   - Fee Preferences
+   - Payment Terms
+
+5. **Relationship Info:**
+   - How did you meet?
+   - Relationship strength
+   - Key decision makers
+   - Budget authority
+
+6. **Save & Set Up:**
+   - Save client details
+   - Set up first job opportunity
+   - Schedule initial meeting
+
+🏢 **Pro Tip:** Add multiple contacts per client for better relationship coverage.**`,
+
+    'How to organize parent company relationships?': `**Organizing Parent Company Relationships:**
+
+**Setting Up Hierarchies:**
+1. **Create Parent Company** → Add main corporate entity first
+2. **Add Subsidiaries** → Create child companies
+3. **Link Relationships** → Set parent-child connections
+4. **Define Hierarchy** → Multiple levels supported
+
+**Benefits of Proper Structure:**
+- Consolidated reporting across all entities
+- Shared contact databases
+- Group-level fee negotiations
+- Unified communication history
+
+**Managing Relationships:**
+1. **Parent Level** → Set global preferences, rates, terms
+2. **Subsidiary Level** → Specific requirements, local contacts
+3. **Reporting** → Roll-up or drill-down views
+4. **Billing** → Centralized or distributed
+
+**Best Practices:**
+- Map organizational chart in system
+- Identify key stakeholders at each level
+- Set appropriate permissions for each entity
+- Regular review of structure changes
+
+🏗️ **Proper setup enables better account management and reporting.**`,
+
+    'How to track client job history?': `**Tracking Client Job History:**
+
+**Viewing Job History:**
+1. **Client Profile** → "Jobs" tab
+2. **Filter Options** → Active, completed, cancelled
+3. **Sort by Date** → Most recent first
+4. **Search Jobs** → By title, status, consultant
+
+**Key Metrics Displayed:**
+- Total jobs posted
+- Average time to fill
+- Success rate percentage
+- Total revenue generated
+- Current pipeline value
+
+**Detailed Job Information:**
+- Job specifications and requirements
+- Assigned consultants
+- Candidate submissions
+- Interview progress
+- Placement outcomes
+
+**Historical Analysis:**
+- Seasonal hiring patterns
+- Preferred job types
+- Success factors
+- Areas for improvement
+
+**Reports Available:**
+- Client performance summary
+- Year-over-year comparisons
+- Consultant effectiveness by client
+- Revenue trends and forecasts
+
+📈 **Use historical data to predict future hiring needs and improve service delivery.**`,
+
+    'How to manage client financial values?': `**Managing Client Financial Values:**
+
+**Setting Up Financial Tracking:**
+1. **Client Profile** → "Financial" tab
+2. **Payment Terms** → 30/60/90 day options
+3. **Preferred Rates** → Standard fee percentages
+4. **Credit Limits** → If applicable
+5. **Billing Preferences** → Consolidated or per-job
+
+**Tracking Revenue:**
+- **Pipeline Value** → Potential upcoming revenue
+- **Invoiced Amount** → Billed but not paid
+- **Received Revenue** → Actual payments
+- **Outstanding Debt** → Overdue amounts
+
+**Financial Reports:**
+- Client profitability analysis
+- Payment history and trends
+- Average fee percentages achieved
+- Revenue forecasting
+
+**Managing Collections:**
+- Automated payment reminders
+- Escalation procedures
+- Credit hold capabilities
+- Payment plan options
+
+💰 **Regular financial reviews help identify your most profitable client relationships.**`
+  },
+
+  calendar: {
+    'How to schedule a candidate meeting?': `**Scheduling Candidate Meetings:**
+
+1. **From Candidate Profile:**
+   - Click "Schedule Meeting"
+   - Choose meeting type (Interview, Consultation, etc.)
+   - Select date and time
+   - Add meeting details
+
+2. **Calendar Integration:**
+   - Syncs with Outlook/Google Calendar
+   - Automatic meeting invitations sent
+   - Reminder notifications set
+   - Video meeting links generated
+
+3. **Meeting Types:**
+   - Initial consultation
+   - Job interview
+   - Offer discussion
+   - Check-in/follow-up
+
+4. **Attendees:**
+   - Add candidate (automatically included)
+   - Include hiring manager
+   - Add team members as needed
+   - Set optional vs required attendees
+
+**Meeting Best Practices:**
+- Send agenda in advance
+- Include job description
+- Prepare interview questions
+- Block adequate time (30-60 minutes)
+
+📅 **All meetings automatically appear in candidate timeline for tracking.**`
+  },
+
+  claims: {
+    'How to submit an expense claim?': `**Submitting Expense Claims:**
+
+1. **Navigate:** Dashboard → Claims → "Submit New Claim"
+2. **Claim Details:**
+   - Claim Category (Travel, Meals, etc.)
+   - Date of Expense
+   - Amount Spent
+   - Business Purpose
+
+3. **Upload Receipts:**
+   - Drag & drop receipt images/PDFs
+   - Multiple receipts per claim supported
+   - Auto-OCR reads receipt details
+   - Verify extracted information
+
+4. **Additional Information:**
+   - Client/Job attribution (if applicable)
+   - Mileage details for travel
+   - Attendees for meals
+   - Supporting documentation
+
+5. **Submit for Approval:**
+   - Review all details
+   - Submit to manager
+   - Track approval status
+   - Receive payment notifications
+
+💡 **Tip:** Submit claims weekly to ensure timely reimbursement and better tracking.**`
+  }
+};
+
+// Get fast FAQ answer using hybrid knowledge content
+async function getFastFAQAnswer(pageKey, faqQuestion) {
+  try {
+    console.log('🔍 Looking for answer in hybrid knowledge base for:', pageKey, '->', faqQuestion);
+    
+    // Ensure knowledge base is loaded (hybrid content)
+    await ensureKnowledgeBaseInitialized();
+    
+    if (!PM_NEXT_KNOWLEDGE || PM_NEXT_KNOWLEDGE.length === 0) {
+      console.log('⚠️ Knowledge base not available, using fallback answers');
+      return getFallbackFAQAnswer(pageKey, faqQuestion);
+    }
+    
+    console.log('📚 Searching hybrid knowledge base (length:', PM_NEXT_KNOWLEDGE.length, 'chars)');
+    
+    // Search for relevant content in the hybrid knowledge base
+    const searchTerms = extractSearchTerms(faqQuestion, pageKey);
+    console.log('🔍 Search terms:', searchTerms);
+    
+    let bestMatch = searchKnowledgeBase(PM_NEXT_KNOWLEDGE, searchTerms, faqQuestion);
+    
+    if (bestMatch && bestMatch.confidence > 0.3) {
+      console.log('✅ Found knowledge base match with confidence:', bestMatch.confidence);
+      
+      // Format the knowledge base content for FAQ response
+      const formattedAnswer = formatKnowledgeBaseAnswer(bestMatch.content, faqQuestion);
+      return formattedAnswer;
+    }
+    
+    console.log('📝 No strong match in knowledge base, using enhanced fallback');
+    return getFallbackFAQAnswer(pageKey, faqQuestion);
+    
+  } catch (error) {
+    console.error('❌ Error in getFastFAQAnswer:', error);
+    console.log('🔄 Falling back to static answers');
+    return getFallbackFAQAnswer(pageKey, faqQuestion);
+  }
+}
+
+// Extract search terms from FAQ question and page context
+function extractSearchTerms(faqQuestion, pageKey) {
+  const terms = [];
+  
+  // Add page-specific terms
+  const pageTerms = {
+    dashboard: ['dashboard', 'analytics', 'performance', 'metrics', 'kpi', 'reporting'],
+    jobs: ['job', 'position', 'posting', 'vacancy', 'role', 'recruitment'],
+    candidates: ['candidate', 'applicant', 'resume', 'cv', 'profile', 'talent'],
+    clients: ['client', 'company', 'organization', 'employer', 'account'],
+    calendar: ['calendar', 'schedule', 'meeting', 'appointment', 'interview'],
+    claims: ['claim', 'expense', 'reimbursement', 'receipt', 'cost']
+  };
+  
+  if (pageTerms[pageKey]) {
+    terms.push(...pageTerms[pageKey]);
+  }
+  
+  // Extract key terms from the question
+  const questionWords = faqQuestion.toLowerCase()
+    .replace(/[?.,!]/g, '')
+    .split(' ')
+    .filter(word => word.length > 3 && !['what', 'how', 'where', 'when', 'why', 'can', 'does'].includes(word));
+  
+  terms.push(...questionWords);
+  
+  return [...new Set(terms)]; // Remove duplicates
+}
+
+// Search knowledge base content for relevant sections
+function searchKnowledgeBase(knowledgeContent, searchTerms, originalQuestion) {
+  // Split by headers and Q&A sections
+  const sections = knowledgeContent.split(/^(##+ .*|### Q:.*)/m).filter(s => s.trim().length > 0);
+  let bestMatch = { content: '', confidence: 0 };
+  
+  console.log('🔍 Searching through', sections.length, 'sections');
+  
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i];
+    if (section.trim().length < 50) continue; // Skip very short sections
+    
+    let relevanceScore = 0;
+    const sectionLower = section.toLowerCase();
+    const questionLower = originalQuestion.toLowerCase();
+    
+    // Higher weight for direct question similarity
+    const questionWords = questionLower.split(' ').filter(w => w.length > 3);
+    const matchingWords = questionWords.filter(word => sectionLower.includes(word));
+    relevanceScore += (matchingWords.length / questionWords.length) * 3.0;
+    
+    // Check for exact phrases from the question
+    const questionPhrases = extractKeyPhrases(originalQuestion);
+    for (const phrase of questionPhrases) {
+      if (sectionLower.includes(phrase.toLowerCase())) {
+        relevanceScore += 2.0;
+      }
+    }
+    
+    // Check for search terms with weighted importance
+    for (const term of searchTerms) {
+      const termCount = (sectionLower.match(new RegExp(term.toLowerCase(), 'g')) || []).length;
+      if (termCount > 0) {
+        relevanceScore += Math.min(termCount * 0.4, 1.5); // Cap per term
+      }
+    }
+    
+    // Bonus for Q&A format sections
+    if (sectionLower.includes('### q:') && sectionLower.includes('**a**:')) {
+      relevanceScore += 1.0;
+    }
+    
+    // Bonus for step-by-step instructions
+    if (sectionLower.includes('step') && (sectionLower.includes('1.') || sectionLower.includes('•'))) {
+      relevanceScore += 0.5;
+    }
+    
+    // Bonus for additional support solutions (database entries)
+    if (sectionLower.includes('additional support solutions')) {
+      relevanceScore += 0.3;
+    }
+    
+    // Calculate confidence with better normalization
+    const confidence = Math.min(relevanceScore / Math.max(searchTerms.length, 3), 1.0);
+    
+    if (confidence > bestMatch.confidence) {
+      // Include next section if this is a Q: header
+      let fullContent = section;
+      if (section.startsWith('### Q:') && i + 1 < sections.length) {
+        fullContent += '\n' + sections[i + 1];
+      }
+      
+      bestMatch = {
+        content: fullContent.trim(),
+        confidence: confidence,
+        matchType: section.startsWith('### Q:') ? 'qa_section' : 'general_section'
+      };
+    }
+  }
+  
+  console.log('🎯 Best match confidence:', bestMatch.confidence, 'Type:', bestMatch.matchType || 'none');
+  return bestMatch;
+}
+
+// Extract key phrases from a question for better matching
+function extractKeyPhrases(question) {
+  const phrases = [];
+  
+  // Common action phrases
+  const actionPatterns = [
+    /how to ([\w\s]+)/gi,
+    /where to ([\w\s]+)/gi,
+    /what is ([\w\s]+)/gi,
+    /when to ([\w\s]+)/gi
+  ];
+  
+  for (const pattern of actionPatterns) {
+    const matches = question.match(pattern);
+    if (matches) {
+      phrases.push(...matches);
+    }
+  }
+  
+  // Add the whole question as a phrase if it's not too long
+  if (question.length < 100) {
+    phrases.push(question);
+  }
+  
+  return phrases;
+}
+
+// Format knowledge base content for FAQ response
+function formatKnowledgeBaseAnswer(content, originalQuestion) {
+  // Remove markdown headers and clean up formatting
+  let formatted = content
+    .replace(/^#+\s*/gm, '') // Remove markdown headers
+    .replace(/\*\*(.*?)\*\*/g, '**$1**') // Keep bold formatting
+    .trim();
+  
+  // If it's a Q&A section, extract the answer part
+  if (formatted.includes('**A**:') || formatted.includes('**A:**')) {
+    const answerMatch = formatted.match(/\*\*A\*\*:?\s*([\s\S]*)/i);
+    if (answerMatch) {
+      formatted = answerMatch[1].trim();
+    }
+  }
+  
+  // Add a personalized intro
+  const intro = `Based on our PM-Next knowledge base:\n\n`;
+  
+  // Ensure the response isn't too long for Lark
+  if (formatted.length > 2000) {
+    formatted = formatted.substring(0, 1900) + '\n\n... [Answer continues - ask for more details if needed]';
+  }
+  
+  return intro + formatted;
+}
+
+// Fallback to static answers if knowledge base search fails
+function getFallbackFAQAnswer(pageKey, faqQuestion) {
+  console.log('🔄 Using fallback static answers for:', pageKey, faqQuestion);
+  
+  const pageAnswers = FAST_FAQ_ANSWERS[pageKey];
+  if (!pageAnswers) {
+    return `I'd be happy to help with "${faqQuestion}". Please ask me this question directly and I'll provide detailed information from our knowledge base.`;
+  }
+  
+  // Exact match first
+  if (pageAnswers[faqQuestion]) {
+    return pageAnswers[faqQuestion];
+  }
+  
+  // Partial match if exact not found
+  const partialMatch = Object.keys(pageAnswers).find(key => 
+    key.toLowerCase().includes(faqQuestion.toLowerCase()) || 
+    faqQuestion.toLowerCase().includes(key.toLowerCase())
+  );
+  
+  if (partialMatch) {
+    return pageAnswers[partialMatch];
+  }
+  
+  // Generic helpful response
+  return `I can help you with "${faqQuestion}". This relates to ${pageKey} functionality in PM-Next. Please ask me this question directly for detailed step-by-step guidance.`;
+}
+
 // Send simplified page selection for serverless environments
 async function sendSimplePageSelectionCard(chatId) {
   try {
@@ -4222,27 +4999,50 @@ async function handleCardInteraction(event) {
       }
       
       console.log('❓ FAQ selected:', faq);
-      console.log('🤖 Generating AI response for FAQ...');
+      console.log('🚀 Using hybrid knowledge base for FAQ response...');
       
       try {
-        // Generate AI response for the FAQ
-        const faqResponse = await generateAIResponse(faq, chatId, { open_id: userId });
-        console.log('✅ FAQ response generated successfully');
-        console.log('📝 Response type:', typeof faqResponse);
-        console.log('📝 Response keys:', Object.keys(faqResponse || {}));
+        // Use hybrid knowledge base (static + database) for FAQ responses
+        let faqAnswer = await getFastFAQAnswer(pageKey, faq);
         
-        const responseText = faqResponse.response || faqResponse;
-        console.log('📤 Sending FAQ response...');
-        await sendMessage(chatId, `**${faq}**\n\n${responseText}`);
-        console.log('✅ FAQ response sent successfully');
+        if (!faqAnswer) {
+          console.log('📝 No knowledge base answer found, generating helpful response...');
+          faqAnswer = `I'd be happy to help with "${faq}". This is a common question about ${page.description}. 
+
+Let me search our comprehensive knowledge base for detailed information. Please ask me this question directly: "${faq}" and I'll provide step-by-step guidance from our PM-Next documentation.`;
+        }
+        
+        console.log('📤 Sending hybrid knowledge FAQ response...');
+        console.log('📊 Response length:', faqAnswer.length, 'characters');
+        console.log('📊 Contains knowledge base intro:', faqAnswer.includes('Based on our PM-Next knowledge base'));
+        
+        await sendMessage(chatId, `**${faq}**\n\n${faqAnswer}`);
+        console.log('✅ Hybrid knowledge FAQ response sent successfully');
         
         // Reset user state to allow normal bot interaction
         userInteractionState.delete(chatId);
+        
+        // Follow up with more detailed info if needed
+        setTimeout(async () => {
+          try {
+            await sendMessage(chatId, "💬 Need more details about this topic? Just ask me directly and I'll provide comprehensive assistance!");
+          } catch (followUpError) {
+            console.log('⚠️ Follow-up message failed (non-critical):', followUpError.message);
+          }
+        }, 2000);
+        
       } catch (error) {
         console.error('❌ ========== FAQ RESPONSE ERROR ==========');
-        console.error('❌ Error generating FAQ response:', error);
+        console.error('❌ Error in fast FAQ response:', error);
         console.error('❌ Error stack:', error.stack);
-        await sendMessage(chatId, "Sorry, I encountered an error processing your FAQ. Please try asking me directly!");
+        
+        // Even simpler fallback
+        try {
+          await sendMessage(chatId, `**${faq}**\n\nI can help with this! Please ask me directly: "${faq}" and I'll provide detailed assistance.`);
+          userInteractionState.delete(chatId);
+        } catch (fallbackError) {
+          console.error('❌ Even fallback failed:', fallbackError.message);
+        }
       }
       console.log('🔍 ======================================');
     } else if (actionValue === 'back_to_pages') {
