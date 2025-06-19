@@ -1377,24 +1377,16 @@ async function sendMessage(chatId, message) {
     }
 
     let messageData;
+    const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
     
-    try {
-      // Try SDK first
-      console.log('🔄 Attempting to use Lark SDK...');
-      messageData = await larkClient.im.message.create({
-        receive_id_type: receiveIdType,
-        receive_id: chatId,
-        msg_type: 'text',
-        content: JSON.stringify({
-          text: message
-        }),
-        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      });
-      console.log('✅ SDK call successful');
-    } catch (sdkError) {
-      console.error('❌ SDK failed, falling back to raw fetch:', sdkError.message);
+    // In serverless, skip SDK entirely and use raw fetch for speed
+    if (isServerless) {
+      console.log('⚡ Using direct API call for serverless speed...');
       
-      // Fallback to raw fetch if SDK fails
+      // Add timeout for serverless environments
+      const tokenController = new AbortController();
+      const tokenTimeout = setTimeout(() => tokenController.abort(), 5000); // 5s timeout
+      
       const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
         method: 'POST',
         headers: {
@@ -1403,14 +1395,20 @@ async function sendMessage(chatId, message) {
         body: JSON.stringify({
           app_id: process.env.LARK_APP_ID,
           app_secret: process.env.LARK_APP_SECRET
-        })
+        }),
+        signal: tokenController.signal
       });
+      
+      clearTimeout(tokenTimeout);
 
       const tokenData = await tokenResponse.json();
       
       if (tokenData.code !== 0) {
         throw new Error(`Failed to get access token: ${tokenData.msg}`);
       }
+
+      const messageController = new AbortController();
+      const messageTimeout = setTimeout(() => messageController.abort(), 5000); // 5s timeout
 
       const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
         method: 'POST',
@@ -1425,11 +1423,68 @@ async function sendMessage(chatId, message) {
             text: message
           }),
           uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        })
+        }),
+        signal: messageController.signal
       });
+      
+      clearTimeout(messageTimeout);
 
       messageData = await messageResponse.json();
-      console.log('✅ Fallback fetch successful');
+      console.log('✅ Direct API call successful');
+    } else {
+      // Use SDK in local development
+      try {
+        console.log('🔄 Attempting to use Lark SDK...');
+        messageData = await larkClient.im.message.create({
+          receive_id_type: receiveIdType,
+          receive_id: chatId,
+          msg_type: 'text',
+          content: JSON.stringify({
+            text: message
+          }),
+          uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        });
+        console.log('✅ SDK call successful');
+      } catch (sdkError) {
+        console.error('❌ SDK failed, falling back to raw fetch:', sdkError.message);
+        
+        // Fallback to raw fetch if SDK fails
+        const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            app_id: process.env.LARK_APP_ID,
+            app_secret: process.env.LARK_APP_SECRET
+          })
+        });
+
+        const tokenData = await tokenResponse.json();
+        
+        if (tokenData.code !== 0) {
+          throw new Error(`Failed to get access token: ${tokenData.msg}`);
+        }
+
+        const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tokenData.tenant_access_token}`
+          },
+          body: JSON.stringify({
+            receive_id: chatId,
+            msg_type: 'text',
+            content: JSON.stringify({
+              text: message
+            }),
+            uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          })
+        });
+
+        messageData = await messageResponse.json();
+        console.log('✅ Fallback fetch successful');
+      }
     }
     
     console.log('📊 Lark API response data:', JSON.stringify(messageData, null, 2));
