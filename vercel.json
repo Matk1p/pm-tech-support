@@ -3,10 +3,6 @@
   "name": "pm-next-lark-bot",
   "builds": [
     {
-      "src": "api/**/*.js",
-      "use": "@vercel/node"
-    },
-    {
       "src": "server.js",
       "use": "@vercel/node"
     }
