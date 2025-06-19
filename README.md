@@ -1,6 +1,6 @@
-# PM-Next Lark Bot
+# PM-Next Support Bot
 
-A smart Lark bot that helps users navigate and understand the PM-Next Recruitment Management System using OpenAI.
+A sophisticated Lark/Feishu support bot for PM-Next recruitment software with **SDK-based architecture**, **interactive cards**, and **pre-built FAQ responses**.
 
 ## Features
 
@@ -10,260 +10,293 @@ A smart Lark bot that helps users navigate and understand the PM-Next Recruitmen
 - 🔄 **Real-time Responses**: Instant replies to user queries
 - 🛡️ **Secure**: Proper authentication and error handling
 
-## 🚀 Key Features
+## 🌟 Key Features
 
-- 🤖 **Intelligent Support Bot**: AI-powered responses using GPT-4
-- 🎫 **Automated Ticket Creation**: Seamless support request handling
-- 📚 **Comprehensive Knowledge Base**: Pre-loaded with PM-Next application knowledge
-- 📈 **Performance Analytics**: Request tracking and response optimization
-- 🔄 **Context-Aware Conversations**: Maintains conversation history
-- ⚡ **Response Caching**: Optimized performance for common questions
-- 🎯 **Smart Escalation**: Automatic ticket creation when AI can't help
-- 🧠 **Self-Improving Knowledge Base**: Automatically updates from resolved tickets
+### ✅ **SDK-Only Implementation** 
+- **No raw fetch calls** - Uses Lark SDK exclusively for all API interactions
+- Better error handling and automatic token management
+- Consistent API patterns throughout the application
 
-### 🔄 Auto-Updating Knowledge Base
+### 🎯 **Interactive Cards Only**
+- **No text fallbacks** - Uses interactive cards exclusively 
+- Rich, button-based navigation for all user interactions
+- Seamless page selection and FAQ browsing experience
 
-The system now automatically learns from support interactions:
+### 🚀 **Pre-Built FAQ Answers**
+- **No AI generation delays** - Instant responses using curated answers
+- Category-based fallbacks from `FAQ_RESPONSES` 
+- Detailed step-by-step guides in `FAST_FAQ_ANSWERS`
 
-**How it works:**
-1. When support team members reply to tickets with solutions, the system detects solution keywords
-2. AI extracts a clean Q&A pair from the original ticket and solution
-3. The knowledge base is automatically updated with the new information
-4. Future similar questions will be answered automatically without creating tickets
+### 📋 **Smart Navigation System**
+- Page-based FAQ organization (Dashboard, Jobs, Candidates, Clients, Calendar, Claims)
+- Follow-up action cards after FAQ responses
+- Seamless navigation between pages and sections
 
-**Triggering automatic updates:**
-Reply to support tickets using phrases like:
-- "Solution: [your solution]"
-- "Fix: [steps to resolve]" 
-- "To resolve this: [solution]"
-- "Here's how to fix: [steps]"
-- Include "add to kb" or "for future reference" in your reply
+## 🏗️ Architecture
 
-**Manual knowledge base updates:**
-- `POST /update-knowledge-base` - Manually add solutions to knowledge base
-- `POST /test-knowledge-update` - Test the update functionality
-- `GET /knowledge-stats` - View knowledge base statistics
+### SDK Integration
+```javascript
+// All API calls use Lark SDK
+const larkClient = new Client({
+  appId: process.env.LARK_APP_ID,
+  appSecret: process.env.LARK_APP_SECRET
+});
 
-## Quick Start
+// User info via SDK
+await larkClient.contact.user.get({
+  user_id: actualUserId,
+  user_id_type: userIdType
+});
 
-### 1. Prerequisites
+// Messages via SDK  
+await larkClient.im.message.create({
+  receive_id_type: receiveIdType,
+  receive_id: chatId,
+  msg_type: 'interactive',
+  content: JSON.stringify(cardContent)
+});
+```
 
-- Node.js (v18 or higher)
-- npm or yarn
-- Lark app credentials
-- OpenAI API key
+### Interactive Card Structure
+```javascript
+const pageSelectionCard = {
+  "config": { "wide_screen_mode": true },
+  "header": {
+    "template": "blue",
+    "title": { "content": "🤖 Welcome to PM-Next Support Bot" }
+  },
+  "elements": [
+    // Page selection buttons
+    // FAQ buttons  
+    // Navigation actions
+  ]
+};
+```
 
-### 2. Installation
+### Pre-Built FAQ Responses
+```javascript
+const FAST_FAQ_ANSWERS = {
+  dashboard: {
+    'How to view staff performance metrics?': `**Viewing Staff Performance Metrics:**
+    
+1. **Go to Dashboard** → Main navigation
+2. **Select Analytics Tab** → Staff Performance section
+3. **Choose Time Period** → Use date filters...`,
+    // More detailed answers...
+  }
+};
+```
 
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js 14+
+- Lark/Feishu App with IM Bot capabilities
+- Environment variables configured
+
+### Installation
 ```bash
-# Clone or create the lark-bot directory
-cd lark-bot
-
-# Install dependencies
 npm install
 ```
 
-### 3. Environment Setup
-
-Create a `.env` file in the root directory with the following variables:
-
-```env
-# Lark Bot Configuration
-LARK_APP_ID=your_lark_app_id
-LARK_APP_SECRET=your_lark_app_secret
+### Environment Setup
+```bash
+# Required Environment Variables
+LARK_APP_ID=your_app_id
+LARK_APP_SECRET=your_app_secret
 LARK_VERIFICATION_TOKEN=your_verification_token
 LARK_ENCRYPT_KEY=your_encrypt_key
 
-# OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4
-
-# Server Configuration
+# Optional
 PORT=3001
-NODE_ENV=development
-
-# Application Information
-APP_NAME=PM-Next Recruitment Management System
-APP_URL=https://your-app-url.com
+NODE_ENV=production
 ```
 
-### 4. Lark App Setup
-
-#### Step 1: Create a Lark App
-1. Go to [Lark Developer Console](https://open.larksuite.com/)
-2. Click "Create App" and choose "Custom App"
-3. Fill in your app details:
-   - App Name: PM-Next Assistant
-   - Description: AI assistant for PM-Next recruitment system
-   - Icon: Upload your app icon
-
-#### Step 2: Configure App Permissions
-Navigate to **Features** → **Bot** and enable the following permissions:
-- `im:message` (Send and receive messages)
-- `im:message.group_at_msg` (Receive group @ messages)
-- `im:message.p2p_msg` (Receive private messages)
-
-#### Step 3: Set Event Subscriptions
-1. Go to **Features** → **Event Subscriptions**
-2. Set Request URL: `https://your-domain.com/lark/events`
-3. Subscribe to these events:
-   - `im.message.receive_v1` (Receive messages)
-   - `im.message.message_read_v1` (Message read status)
-
-#### Step 4: Get App Credentials
-From the **App Info** page, copy:
-- App ID
-- App Secret
-- Verification Token
-- Encrypt Key (if encryption is enabled)
-
-### 5. Running the Bot
-
+### Run the Bot
 ```bash
-# Development mode
+# Development
 npm run dev
 
-# Production mode
+# Production
 npm start
 ```
 
-The bot will be available at `http://localhost:3001` (or your configured port).
+## 📖 Usage
 
-## Usage
+### User Experience Flow
 
-### Direct Messages
-Users can send direct messages to the bot:
+1. **Welcome Message**: Interactive card with page selection buttons
+2. **Page Selection**: Click buttons for Dashboard, Jobs, Candidates, etc.
+3. **FAQ Selection**: Interactive card with relevant FAQ buttons  
+4. **Instant Answers**: Pre-built responses with formatting
+5. **Follow-up Actions**: Navigation cards for continued interaction
+
+### Example Interaction
+
 ```
-"How do I add a new candidate?"
-"Where can I find the analytics dashboard?"
-"How do I create a job posting?"
+User: Hi
+Bot: [Interactive Card] Welcome to PM-Next Support Bot
+     [🏢 Clients] [💼 Jobs] [👥 Candidates] ...
+
+User: [Clicks "Jobs"]  
+Bot: [Interactive Card] Jobs - FAQs
+     [How to create a new job posting?]
+     [How to assign candidates to jobs?] ...
+
+User: [Clicks FAQ]
+Bot: **How to create a new job posting?**
+     
+     **Creating a New Job Posting:**
+     1. Navigate: Dashboard → Jobs → "Create New Job"
+     2. Basic Information: Job Title, Client/Company...
+     
+     [🔙 Back to FAQs] [🏠 Main Menu] [💬 Ask Question]
 ```
 
-### Group Mentions
-In group chats, users can mention the bot:
-```
-"@PM-Next Assistant How do I access the pipeline view?"
-"@PM-Next Assistant What are the main features of the system?"
-```
+## 🛠️ Technical Implementation
 
-## Sample Conversations
+### Key Components
 
-**User**: "How do I add a new candidate?"
+#### 1. SDK-Based API Layer
+- `getLarkUserInfo()`: User information via SDK
+- `sendMessage()`: Text messages via SDK  
+- `sendInteractiveCard()`: Interactive cards via SDK
+- `getParentMessageContent()`: Message retrieval via SDK
 
-**Bot**: "To add a new candidate in PM-Next:
+#### 2. Interactive Card System
+- `sendPageSelectionMessage()`: Main navigation card
+- `sendPageFAQs()`: FAQ selection cards
+- `handleCardInteraction()`: Button click processing
 
-1. Navigate to **Dashboard → Candidates**
-2. Click the **Add New** button
-3. Fill in the candidate information form
-4. Upload their resume (optional - the system supports AI resume parsing)
-5. Click **Save** to add the candidate to your database
+#### 3. Pre-Built Answer System  
+- `FAST_FAQ_ANSWERS`: Detailed step-by-step answers
+- `FAQ_RESPONSES`: Category-based fallback responses
+- `getFastFAQAnswer()`: Answer retrieval logic
 
-The candidate will now appear in your candidates list and can be associated with job applications."
+#### 4. Navigation State Management
+- `userInteractionState`: Track user's current page/mode
+- `MAIN_PAGES`: Page definitions and FAQ lists
+- Seamless state transitions between cards
 
-**User**: "Where is the analytics dashboard?"
+### Performance Benefits
 
-**Bot**: "You can access the Analytics Dashboard by:
+| Feature | Before | After |
+|---------|--------|-------|
+| API Calls | Raw fetch + manual token management | SDK with automatic token handling |
+| User Interface | Text fallbacks when cards fail | Interactive cards exclusively |
+| FAQ Responses | AI generation (slow) | Pre-built answers (instant) |
+| Error Handling | Basic try/catch | SDK-provided error context |
+| Code Maintainability | Mixed approaches | Consistent SDK patterns |
 
-**Navigation**: Dashboard → Analytics
+## 🎯 Interactive Features
 
-The Analytics Dashboard provides:
-• Real-time KPIs and performance metrics
-• Revenue tracking and forecasting
-• Performance indicators for your recruitment activities
-• Custom reports and data visualization
+### Page Categories
+- **📊 Dashboard**: Analytics, KPIs, performance metrics
+- **💼 Jobs**: Job creation, candidate assignment, tracking  
+- **👥 Candidates**: Profile management, resume upload, applications
+- **🏢 Clients**: Account management, company relationships
+- **📅 Calendar**: Scheduling, meetings, leave requests
+- **💰 Claims**: Expense management, approvals, tracking
 
-This is your central hub for monitoring recruitment performance and making data-driven decisions."
+### FAQ Response Types
+1. **Exact Match**: From `FAST_FAQ_ANSWERS` with detailed steps
+2. **Category Match**: From `FAQ_RESPONSES` with general guidance  
+3. **Fallback**: Helpful prompt to ask questions directly
 
-## Customization
+### Card Interaction Types
+- **Page Selection**: Choose functional area
+- **FAQ Selection**: Pick specific question
+- **Navigation**: Back, home, custom questions
+- **Follow-up**: Continue conversation after answers
 
-### Adding More Knowledge
-Edit the `PM_NEXT_KNOWLEDGE` constant in `server.js` to add more information about your application:
+## 🔧 Configuration
 
+### Adding New FAQs
 ```javascript
-const PM_NEXT_KNOWLEDGE = `
-// Add your custom knowledge here
-## New Feature:
-- Description and navigation instructions
-`;
-```
+// Add to MAIN_PAGES
+'new_page': {
+  name: '🆕 New Feature',
+  description: 'Description of new feature',
+  faqs: [
+    'How to use new feature?',
+    'Where to find new settings?'
+  ]
+}
 
-### Modifying AI Behavior
-Adjust the OpenAI system prompt in the `generateAIResponse` function to change how the bot responds:
-
-```javascript
-{
-  role: 'system',
-  content: `Your custom system prompt here...`
+// Add to FAST_FAQ_ANSWERS
+new_page: {
+  'How to use new feature?': `**Using New Feature:**
+  
+  1. Step one...
+  2. Step two...`
 }
 ```
 
-## Deployment
-
-### Option 1: Railway
-1. Connect your GitHub repository to Railway
-2. Set environment variables in Railway dashboard
-3. Deploy automatically
-
-### Option 2: Heroku
-1. Create a new Heroku app
-2. Set environment variables
-3. Deploy using Git or GitHub integration
-
-### Option 3: Digital Ocean/AWS/GCP
-1. Set up your server
-2. Install Node.js and dependencies
-3. Configure environment variables
-4. Use PM2 or similar for process management
-
-## Troubleshooting
-
-### Common Issues
-
-**Bot not responding to messages**
-- Check if the webhook URL is correctly configured in Lark
-- Verify that event subscriptions are properly set up
-- Check server logs for error messages
-
-**OpenAI API errors**
-- Verify your OpenAI API key is correct
-- Check your OpenAI usage limits
-- Ensure the model (gpt-4) is available in your plan
-
-**Lark authentication errors**
-- Double-check your App ID and App Secret
-- Verify the verification token matches
-
-### Debugging
-
-Enable debug mode by setting:
-```env
-NODE_ENV=development
+### Customizing Cards
+```javascript
+// Modify card appearance
+const cardContent = {
+  "config": { "wide_screen_mode": true },
+  "header": {
+    "template": "blue", // green, red, yellow
+    "title": { "content": "Custom Title" }
+  }
+};
 ```
 
-Check logs:
+## 📊 Monitoring & Analytics
+
+### Built-in Analytics
+- Request tracking and response times
+- Cache hit rates for common questions  
+- Error counting and categorization
+- User interaction patterns
+
+### Debug Endpoints
+- `/test-card-interaction`: Simulate button clicks
+- `/current-knowledge-base`: View loaded FAQ data
+- `/health`: Service health check
+
+## 🚀 Deployment
+
+### Local Development
 ```bash
-# View real-time logs
 npm run dev
-
-# Check health endpoint
-curl http://localhost:3001/health
+# Bot runs on http://localhost:3001
 ```
 
-## Security Considerations
+### Production Deployment
+- **Vercel**: Auto-deploy from Git
+- **Docker**: Container deployment
+- **Traditional**: PM2 or systemd
 
-- Store all secrets in environment variables
-- Use HTTPS in production
-- Implement rate limiting if needed
-- Monitor API usage and costs
-- Regular security updates for dependencies
+### Environment-Specific Behavior
+- All environments use SDK and interactive cards
+- No serverless-specific fallbacks needed
+- Consistent experience across deployments
 
-## Support
+## 🔒 Security
 
-For issues related to:
-- **PM-Next Application**: Contact your development team
-- **Lark Bot Setup**: Check Lark Developer Documentation
-- **OpenAI Integration**: Review OpenAI API documentation
+- Environment variable protection
+- Lark webhook verification
+- Request validation and sanitization
+- No sensitive data in logs
 
-## License
+## 📝 Contributing
 
-MIT License - see LICENSE file for details. 
+1. Follow SDK-only patterns for new API calls
+2. Use interactive cards for all user interfaces
+3. Add pre-built answers for new FAQ categories
+4. Maintain consistent error handling
+5. Test card interactions thoroughly
+
+## 📞 Support
+
+For technical support or feature requests:
+- Create GitHub issues for bugs/features
+- Check debug endpoints for troubleshooting
+- Review logs for detailed error information
+
+---
+
+**🎉 Built with SDK-first architecture, interactive card excellence, and instant pre-built responses!** 

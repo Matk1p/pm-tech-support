@@ -828,7 +828,7 @@ async function handleMessage(event) {
       if (aiResponse && !responseMetadata.interactiveCard) {
         console.log('📤 Sending response to Lark...');
         // Send response back to Lark
-        await sendMessage(chat_id, aiResponse);
+        await sendMessage(chatId, aiResponse);
         console.log('🎉 Message sent successfully!');
       } else if (responseMetadata.interactiveCard) {
         console.log('🎯 Interactive card already sent, skipping text response');
@@ -1263,86 +1263,49 @@ async function getLarkUserInfo(userId) {
     
     console.log('👤 Using user ID for API call:', actualUserId);
     
-    // Get access token first
-    console.log('🔑 Getting access token...');
-    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        app_id: process.env.LARK_APP_ID,
-        app_secret: process.env.LARK_APP_SECRET
-      })
-    });
-
-    const tokenData = await tokenResponse.json();
-    console.log('🔑 Token response:', tokenData);
-    
-    if (tokenData.code !== 0) {
-      console.error('❌ Failed to get access token:', tokenData.msg);
-      return null;
-    }
-
-    const accessToken = tokenData.tenant_access_token;
-    console.log('✅ Access token obtained');
-
-    // Determine the correct endpoint based on user ID format
-    let endpoint;
+    // Determine the correct user ID type based on format
     let userIdType;
-    
     if (actualUserId.startsWith('ou_')) {
-      // This is an open_id
-      endpoint = `https://open.larksuite.com/open-apis/contact/v3/users/${actualUserId}?user_id_type=open_id`;
       userIdType = 'open_id';
     } else if (actualUserId.match(/^[a-f0-9]{8}$/)) {
-      // This looks like a user_id (8 hex characters)
-      endpoint = `https://open.larksuite.com/open-apis/contact/v3/users/${actualUserId}?user_id_type=user_id`;
       userIdType = 'user_id';
     } else {
-      // Default to treating as open_id
-      endpoint = `https://open.larksuite.com/open-apis/contact/v3/users/${actualUserId}?user_id_type=open_id`;
-      userIdType = 'open_id';
+      userIdType = 'open_id'; // Default
     }
     
-    console.log('🎯 Using endpoint:', endpoint);
     console.log('🎯 User ID type determined:', userIdType);
 
     try {
-      console.log('🔍 Calling Lark API:', endpoint);
+      console.log('🔍 Calling Lark SDK for user info...');
       
-      const userResponse = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
+      const response = await larkClient.contact.user.get({
+        user_id: actualUserId,
+        user_id_type: userIdType
       });
 
-      const userData = await userResponse.json();
-      console.log('📊 User API response:', userData);
+      console.log('📊 User SDK response:', response);
       
-      if (userData.code === 0 && userData.data?.user) {
+      if (response.code === 0 && response.data?.user) {
         const userInfo = {
           user_id: actualUserId,
-          name: userData.data.user.name || 'Unknown User',
-          email: userData.data.user.email || null,
-          mobile: userData.data.user.mobile || null,
-          avatar: userData.data.user.avatar?.avatar_240 || null
+          name: response.data.user.name || 'Unknown User',
+          email: response.data.user.email || null,
+          mobile: response.data.user.mobile || null,
+          avatar: response.data.user.avatar?.avatar_240 || null
         };
 
-        console.log('✅ User info fetched successfully:', userInfo);
+        console.log('✅ User info fetched successfully via SDK:', userInfo);
         return userInfo;
       } else {
-        console.log('❌ API call failed:', 'Code:', userData.code, 'Message:', userData.msg);
+        console.log('❌ SDK call failed:', 'Code:', response.code, 'Message:', response.msg);
       }
-    } catch (apiError) {
-      console.log('❌ API call error:', apiError.message);
+    } catch (sdkError) {
+      console.log('❌ SDK call error:', sdkError.message);
     }
 
-    console.error('❌ API call failed for user ID:', actualUserId);
+    console.error('❌ SDK call failed for user ID:', actualUserId);
     
-    // Try a simple fallback approach - return basic info with the user ID
+    // Return basic fallback info
     console.log('🔄 Attempting fallback user info creation');
     const userIdString = String(actualUserId);
     return {
@@ -1360,7 +1323,7 @@ async function getLarkUserInfo(userId) {
   }
 }
 
-// Send message to Lark using direct API call
+// Send message to Lark using SDK
 async function sendMessage(chatId, message) {
   try {
     console.log('📨 Sending message to chat:', chatId);
@@ -1369,142 +1332,48 @@ async function sendMessage(chatId, message) {
     // Detect the ID type based on the chat ID format
     let receiveIdType = 'chat_id';
     if (chatId.startsWith('ou_')) {
-      receiveIdType = 'user_id';
+      receiveIdType = 'open_id';
     } else if (chatId.startsWith('oc_')) {
       receiveIdType = 'chat_id';
     } else if (chatId.startsWith('og_')) {
       receiveIdType = 'chat_id';
     }
 
-    let messageData;
-    const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    
-    // In serverless, skip SDK entirely and use raw fetch for speed
-    if (isServerless) {
-      console.log('⚡ Using direct API call for serverless speed...');
-      
-      const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          app_id: process.env.LARK_APP_ID,
-          app_secret: process.env.LARK_APP_SECRET
-        })
-      });
+    console.log('🔍 Using receive_id_type:', receiveIdType);
 
-      const tokenData = await tokenResponse.json();
+    try {
+      console.log('🔄 Using Lark SDK for message sending...');
+      const messageData = await larkClient.im.message.create({
+        receive_id_type: receiveIdType,
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({
+          text: message
+        }),
+        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      });
       
-      if (tokenData.code !== 0) {
-        throw new Error(`Failed to get access token: ${tokenData.msg}`);
+      console.log('✅ SDK message sending successful');
+      console.log('📊 SDK response code:', messageData?.code);
+      
+      if (!messageData || messageData.code !== 0) {
+        throw new Error(`SDK message failed: ${messageData?.msg || 'Unknown error'} (Code: ${messageData?.code})`);
       }
 
-      const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tokenData.tenant_access_token}`
-        },
-        body: JSON.stringify({
-          receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({
-            text: message
-          }),
-          uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        })
-      });
-
-      messageData = await messageResponse.json();
-      console.log('✅ Direct API call successful');
-    } else {
-      // Use SDK in local development
-      try {
-        console.log('🔄 Attempting to use Lark SDK...');
-        messageData = await larkClient.im.message.create({
-          receive_id_type: receiveIdType,
-          receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({
-            text: message
-          }),
-          uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        });
-        console.log('✅ SDK call successful');
-      } catch (sdkError) {
-        console.error('❌ SDK failed, falling back to raw fetch:', sdkError.message);
-        
-        // Fallback to raw fetch if SDK fails
-        const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            app_id: process.env.LARK_APP_ID,
-            app_secret: process.env.LARK_APP_SECRET
-          })
-        });
-
-        const tokenData = await tokenResponse.json();
-        
-        if (tokenData.code !== 0) {
-          throw new Error(`Failed to get access token: ${tokenData.msg}`);
-        }
-
-        const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${tokenData.tenant_access_token}`
-          },
-          body: JSON.stringify({
-            receive_id: chatId,
-            msg_type: 'text',
-            content: JSON.stringify({
-              text: message
-            }),
-            uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-          })
-        });
-
-        messageData = await messageResponse.json();
-        console.log('✅ Fallback fetch successful');
-      }
+      console.log('✅ Message sent successfully via SDK');
+      console.log('📬 Message ID:', messageData.data?.message_id);
+      console.log('📅 Timestamp:', messageData.data?.create_time);
+      
+      return messageData;
+      
+    } catch (sdkError) {
+      console.error('❌ SDK message sending failed:', sdkError.message);
+      throw sdkError;
     }
     
-    console.log('📊 Lark API response data:', JSON.stringify(messageData, null, 2));
-    
-    if (messageData.code !== 0) {
-      console.error('🚨 Lark API Error Details:', {
-        code: messageData.code,
-        msg: messageData.msg,
-        data: messageData.data,
-        error: messageData.error
-      });
-      throw new Error(`Failed to send message: ${messageData.msg || 'Unknown error'}`);
-    }
-
-    console.log('✅ Message sent successfully');
-    return { success: true, messageId: messageData.data?.message_id };
   } catch (error) {
     console.error('❌ Error sending message to Lark:', error);
-    console.error('📋 Error details:', error.message);
-    
-    // Add additional debugging for serverless issues
-    if (error.message.includes('fetch failed') || error.message.includes('SocketError') || error.message.includes('EADDRNOTAVAIL')) {
-      console.error('🌐 Network connectivity issue detected');
-      console.error('💡 This may be a DNS resolution or connectivity issue');
-    }
-    
-    // Handle timeout errors specifically
-    if (error.name === 'AbortError' || error.message.includes('aborted')) {
-      console.error('⏱️ Message sending timed out - Lark API too slow');
-      throw new Error('Message sending timed out due to network latency. Please try again.');
-    }
-    
-    // Re-throw the error so it can be handled by calling functions
+    console.error('📋 Message error details:', error.message);
     throw error;
   }
 }
@@ -3206,66 +3075,49 @@ function isSupportSolution(message, isReplyToTicket = false) {
  * Get parent message content from Lark API
  */
 async function getParentMessageContent(messageId) {
+  if (!messageId) {
+    console.log('⚠️ No message ID provided for parent message lookup');
+    return null;
+  }
+  
   try {
-    console.log('🔍 Attempting to fetch parent message:', messageId);
+    console.log('🔍 Fetching parent message content for:', messageId);
     
-    // Get access token
-    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        app_id: process.env.LARK_APP_ID,
-        app_secret: process.env.LARK_APP_SECRET
-      })
-    });
+    try {
+      console.log('🔄 Using Lark SDK for message content...');
+      const response = await larkClient.im.message.get({
+        message_id: messageId
+      });
 
-    const tokenData = await tokenResponse.json();
-    
-    if (tokenData.code !== 0) {
-      console.log('❌ Failed to get access token for parent message:', tokenData.msg);
-      return null;
-    }
-
-    const accessToken = tokenData.tenant_access_token;
-
-    // Get the parent message content
-    const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages/${messageId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const messageData = await messageResponse.json();
-    console.log('📧 Parent message API response:', messageData);
-    
-    if (messageData.code === 0 && messageData.data && messageData.data.items && messageData.data.items.length > 0) {
-      const content = messageData.data.items[0].body.content;
-      console.log('📄 Parent message content:', content);
+      console.log('📊 Parent message SDK response:', response);
       
-      // Try to parse content if it's JSON
-      try {
-        const parsedContent = JSON.parse(content);
-        if (parsedContent.text) {
-          console.log('📝 Extracted text from parent message:', parsedContent.text);
-          return parsedContent.text;
+      if (response.code === 0 && response.data?.items?.[0]) {
+        const messageData = response.data.items[0];
+        
+        // Extract text content based on message type
+        let content = '';
+        if (messageData.msg_type === 'text' && messageData.body?.content) {
+          const textContent = JSON.parse(messageData.body.content);
+          content = textContent.text || '';
+        } else if (messageData.msg_type === 'interactive' && messageData.body?.content) {
+          // For interactive cards, try to extract readable content
+          const cardContent = JSON.parse(messageData.body.content);
+          content = JSON.stringify(cardContent); // Fallback to JSON string
         }
-      } catch (parseError) {
-        // Content might already be plain text
-        console.log('📄 Using content as plain text');
+        
+        console.log('✅ Parent message content retrieved via SDK:', content?.substring(0, 100) + '...');
         return content;
+      } else {
+        console.log('❌ SDK call failed:', 'Code:', response.code, 'Message:', response.msg);
+        return null;
       }
-      
-      return content;
-    } else {
-      console.log('❌ Failed to get parent message:', messageData.msg);
+    } catch (sdkError) {
+      console.log('❌ SDK call error:', sdkError.message);
       return null;
     }
+    
   } catch (error) {
-    console.log('❌ Error fetching parent message:', error.message);
+    console.error('❌ Error fetching parent message content:', error);
     return null;
   }
 }
@@ -4230,38 +4082,23 @@ const FAST_FAQ_ANSWERS = {
 // Get fast FAQ answer using hybrid knowledge content
 async function getFastFAQAnswer(pageKey, faqQuestion) {
   try {
-    console.log('🔍 Looking for answer in hybrid knowledge base for:', pageKey, '->', faqQuestion);
+    console.log('🔍 Getting pre-built FAQ answer for:', pageKey, '->', faqQuestion);
     
-    // Ensure knowledge base is loaded (hybrid content)
-    await ensureKnowledgeBaseInitialized();
-    
-    if (!PM_NEXT_KNOWLEDGE || PM_NEXT_KNOWLEDGE.length === 0) {
-      console.log('⚠️ Knowledge base not available, using fallback answers');
-      return getFallbackFAQAnswer(pageKey, faqQuestion);
+    // Use pre-built answers from FAST_FAQ_ANSWERS
+    const pageAnswers = FAST_FAQ_ANSWERS[pageKey];
+    if (pageAnswers && pageAnswers[faqQuestion]) {
+      console.log('✅ Found pre-built answer for FAQ question');
+      return pageAnswers[faqQuestion];
     }
     
-    console.log('📚 Searching hybrid knowledge base (length:', PM_NEXT_KNOWLEDGE.length, 'chars)');
-    
-    // Search for relevant content in the hybrid knowledge base
-    const searchTerms = extractSearchTerms(faqQuestion, pageKey);
-    console.log('🔍 Search terms:', searchTerms);
-    
-    let bestMatch = searchKnowledgeBase(PM_NEXT_KNOWLEDGE, searchTerms, faqQuestion);
-    
-    if (bestMatch && bestMatch.confidence > 0.3) {
-      console.log('✅ Found knowledge base match with confidence:', bestMatch.confidence);
-      
-      // Format the knowledge base content for FAQ response
-      const formattedAnswer = formatKnowledgeBaseAnswer(bestMatch.content, faqQuestion);
-      return formattedAnswer;
-    }
-    
-    console.log('📝 No strong match in knowledge base, using enhanced fallback');
-    return getFallbackFAQAnswer(pageKey, faqQuestion);
+    // If no exact match, use the fallback FAQ response from FAQ_RESPONSES
+    console.log('📝 Using category-based pre-built response');
+    const categoryResponse = getFallbackFAQAnswer(pageKey, faqQuestion);
+    return categoryResponse;
     
   } catch (error) {
     console.error('❌ Error in getFastFAQAnswer:', error);
-    console.log('🔄 Falling back to static answers');
+    console.log('🔄 Falling back to category response');
     return getFallbackFAQAnswer(pageKey, faqQuestion);
   }
 }
@@ -4423,10 +4260,29 @@ function formatKnowledgeBaseAnswer(content, originalQuestion) {
   return intro + formatted;
 }
 
-// Fallback to static answers if knowledge base search fails
+// Fallback to category-based static answers
 function getFallbackFAQAnswer(pageKey, faqQuestion) {
-  console.log('🔄 Using fallback static answers for:', pageKey, faqQuestion);
+  console.log('🔄 Using category-based static answers for:', pageKey, faqQuestion);
   
+  // Map page keys to issue categories
+  const pageToCategory = {
+    'dashboard': 'general',
+    'jobs': 'job_management', 
+    'candidates': 'candidate_management',
+    'clients': 'client_management',
+    'calendar': 'general',
+    'claims': 'general'
+  };
+  
+  const category = pageToCategory[pageKey] || 'general';
+  const categoryResponse = FAQ_RESPONSES[category];
+  
+  if (categoryResponse) {
+    console.log('✅ Using category response for:', category);
+    return categoryResponse;
+  }
+  
+  // Final fallback
   const pageAnswers = FAST_FAQ_ANSWERS[pageKey];
   if (!pageAnswers) {
     return `I'd be happy to help with "${faqQuestion}". Please ask me this question directly and I'll provide detailed information from our knowledge base.`;
@@ -4543,49 +4399,10 @@ async function sendSimplePageSelectionCard(chatId) {
   }
 }
 
-// Send text-only page selection (no cards)
-async function sendTextOnlyPageSelection(chatId) {
-  try {
-    console.log('📝 Sending text-only page selection');
-    
-    let message = `🤖 **PM-Next Support Bot** - Quick Help\n\n`;
-    message += `Please select which page you need help with:\n\n`;
-    
-    Object.keys(MAIN_PAGES).forEach((pageKey, index) => {
-      const page = MAIN_PAGES[pageKey];
-      message += `**${index + 1}.** ${page.name}\n`;
-    });
-    
-    message += `\n💬 **Type a number (1-${Object.keys(MAIN_PAGES).length}) or ask directly!**`;
-    
-    await sendMessage(chatId, message);
-    
-    // Set user state for text-based page selection
-    userInteractionState.set(chatId, {
-      step: 'text_page_selection',
-      selectedPage: null,
-      awaiting: true
-    });
-    
-    console.log('✅ Text-only page selection sent');
-    return { success: true, cardType: 'text_only' };
-    
-  } catch (error) {
-    console.error('❌ Error sending text-only page selection:', error);
-    return { success: false, error: error.message };
-  }
-}
+
 
 // Send interactive page selection message
 async function sendPageSelectionMessage(chatId) {
-  const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
-  
-  // In serverless, skip cards entirely if FORCE_TEXT_MODE is enabled
-  if (isServerless && process.env.FORCE_TEXT_MODE === 'true') {
-    console.log('⚡ FORCE_TEXT_MODE enabled - using text-only page selection');
-    return await sendTextOnlyPageSelection(chatId);
-  }
-  
   try {
     console.log('📋 Sending page selection message to chat:', chatId);
     
@@ -4653,11 +4470,11 @@ async function sendPageSelectionMessage(chatId) {
     
     // Check if card sending was successful
     if (result && result.success === false) {
-      console.log('⚠️ Page selection card sending failed, returning error result');
-      return result;
+      console.error('❌ Page selection card sending failed:', result.error);
+      throw new Error(result.error || 'Failed to send page selection card');
     }
     
-    // Set user state to awaiting page selection only if card was sent successfully
+    // Set user state to awaiting page selection
     userInteractionState.set(chatId, {
       step: 'awaiting_page_selection',
       selectedPage: null,
@@ -4665,221 +4482,101 @@ async function sendPageSelectionMessage(chatId) {
     });
     
     console.log('✅ Page selection message sent successfully');
-    return { success: true, cardType: 'full_page_selection' };
+    return { success: true, cardType: 'interactive_card' };
     
   } catch (error) {
     console.error('❌ Error sending page selection message:', error.message || error);
-    console.log('🔄 Attempting text fallback for page selection...');
-    
-    // Fallback to text message
-    try {
-      await sendMessage(chatId, "Welcome to PM-Next Support Bot! 🤖\n\nPlease let me know which page you need help with:\n📊 Dashboard\n💼 Jobs\n👥 Candidates\n🏢 Clients\n📅 Calendar\n💰 Claims\n\nOr ask me anything about PM-Next directly!");
-      console.log('✅ Page selection text fallback sent successfully');
-      return { success: true, cardType: 'text_fallback' };
-    } catch (textError) {
-      console.error('❌ Even text fallback failed for page selection:', textError.message);
-      return { 
-        success: false, 
-        error: error.message || 'Failed to send page selection',
-        cardType: 'full_page_selection'
-      };
-    }
+    throw error;
   }
 }
 
-// Send text-only FAQs (no cards) for maximum serverless reliability
-async function sendTextOnlyFAQs(chatId, pageKey) {
-  try {
-    console.log('📝 Sending text-only FAQs for:', pageKey);
-    
-    const page = MAIN_PAGES[pageKey];
-    if (!page) {
-      throw new Error(`Unknown page: ${pageKey}`);
-    }
-    
-    let message = `**${page.name} - Quick Help** 🚀\n\n`;
-    
-    page.faqs.forEach((faq, index) => {
-      message += `**${index + 1}.** ${faq}\n\n`;
-    });
-    
-    message += `💬 **Type a number (1-${page.faqs.length}) or ask your question directly!**\n\n`;
-    message += `🔙 Type "back" for main menu`;
-    
-    const result = await sendMessage(chatId, message);
-    console.log('📊 Message send result:', result);
-    
-    // Set user state for text-based FAQ interaction
-    userInteractionState.set(chatId, {
-      step: 'text_faq_mode',
-      selectedPage: pageKey,
-      awaiting: true
-    });
-    
-    console.log('✅ Text-only FAQs sent successfully');
-    return { success: true, cardType: 'text_only', messageId: result?.messageId };
-    
-  } catch (error) {
-    console.error('❌ Error sending text-only FAQs:', error);
-    return { success: false, error: error.message };
-  }
-}
+
 
 // Send FAQ options for selected page
 async function sendPageFAQs(chatId, pageKey) {
-  const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
-  
-  // TEMPORARY FIX: Always use text mode in serverless for reliability
-  if (isServerless) {
-    console.log('⚡ Using text-only FAQ mode for serverless reliability');
-    return await sendTextOnlyFAQs(chatId, pageKey);
-  }
-  
   try {
     console.log('📋 Sending FAQ options for page:', pageKey);
-    console.log('🌐 Environment: ' + (isServerless ? 'Serverless' : 'Local'));
     
     const page = MAIN_PAGES[pageKey];
     if (!page) {
       throw new Error(`Unknown page: ${pageKey}`);
     }
     
-    // For serverless environments, use simpler card structure to avoid timeouts
-    let cardContent;
-    
-    if (isServerless) {
-      // Simplified card for serverless - fewer elements, smaller payload
-      console.log('🌐 Using simplified FAQ card for serverless environment');
-      cardContent = {
-        "elements": [
-          {
-            "tag": "div",
-            "text": {
-              "content": `${page.name} - FAQs`,
-              "tag": "plain_text"
-            }
-          },
-          // Only show first 3 FAQs for faster loading
-          ...page.faqs.slice(0, 3).map((faq, index) => ({
-            "tag": "action",
-            "actions": [{
-              "tag": "button",
-              "text": {
-                "content": faq.length > 40 ? faq.substring(0, 37) + '...' : faq,
-                "tag": "plain_text"
-              },
-              "type": "primary",
-              "value": `faq_${pageKey}_${index}`
-            }]
-          })),
-          {
-            "tag": "action",
-            "actions": [
-              {
-                "tag": "button",
-                "text": {
-                  "content": "🔙 Back",
-                  "tag": "plain_text"
-                },
-                "type": "default",
-                "value": "back_to_pages"
-              }
-            ]
-          }
-        ]
-      };
-    } else {
-      // Full card for local environments
-      cardContent = {
-        "config": {
-          "wide_screen_mode": true
-        },
-        "header": {
-          "template": "green",
-          "title": {
-            "content": `${page.name} - FAQs`,
+    // Create interactive FAQ card
+    const cardContent = {
+      "config": {
+        "wide_screen_mode": true
+      },
+      "header": {
+        "template": "green",
+        "title": {
+          "content": `${page.name} - FAQs`,
+          "tag": "plain_text"
+        }
+      },
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": `Here are common questions about ${page.description}:`,
             "tag": "plain_text"
           }
         },
-        "elements": [
-          {
-            "tag": "div",
+        {
+          "tag": "hr"
+        },
+        ...page.faqs.map((faq, index) => ({
+          "tag": "action",
+          "actions": [{
+            "tag": "button",
             "text": {
-              "content": `Here are common questions about ${page.description}:`,
+              "content": faq,
               "tag": "plain_text"
-            }
-          },
-          {
-            "tag": "hr"
-          },
-          ...page.faqs.map((faq, index) => ({
-            "tag": "action",
-            "actions": [{
+            },
+            "type": "default",
+            "value": `faq_${pageKey}_${index}`
+          }]
+        })),
+        {
+          "tag": "hr"
+        },
+        {
+          "tag": "action",
+          "actions": [
+            {
               "tag": "button",
               "text": {
-                "content": faq,
+                "content": "🔙 Back to Page Selection",
                 "tag": "plain_text"
               },
               "type": "default",
-              "value": `faq_${pageKey}_${index}`
-            }]
-          })),
-          {
-            "tag": "hr"
-          },
-          {
-            "tag": "action",
-            "actions": [
-              {
-                "tag": "button",
-                "text": {
-                  "content": "🔙 Back to Page Selection",
-                  "tag": "plain_text"
-                },
-                "type": "default",
-                "value": "back_to_pages"
+              "value": "back_to_pages"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "💬 Ask Custom Question",
+                "tag": "plain_text"
               },
-              {
-                "tag": "button",
-                "text": {
-                  "content": "💬 Ask Custom Question",
-                  "tag": "plain_text"
-                },
-                "type": "primary",
-                "value": "custom_question"
-              }
-            ]
-          }
-        ]
-      };
-    }
+              "type": "primary",
+              "value": "custom_question"
+            }
+          ]
+        }
+      ]
+    };
 
     console.log('📦 FAQ card payload size:', JSON.stringify(cardContent).length, 'bytes');
     
-         // Set a very short timeout for FAQ cards in serverless
-     const maxWaitTime = isServerless ? 5000 : 25000; // 5s for serverless, 25s for local
-    console.log('⏱️ Using timeout:', maxWaitTime + 'ms');
-    
-    // Create a timeout promise to race against card sending
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`FAQ card timeout after ${maxWaitTime}ms - using text fallback`));
-      }, maxWaitTime);
-    });
-    
-    // Race between card sending and timeout
-    const result = await Promise.race([
-      sendInteractiveCard(chatId, cardContent),
-      timeoutPromise
-    ]);
+    const result = await sendInteractiveCard(chatId, cardContent);
     
     // Check if card sending was successful
     if (result && result.success === false) {
-      console.log('⚠️ FAQ card sending failed gracefully, using text fallback');
+      console.error('❌ FAQ card sending failed:', result.error);
       throw new Error(result.error || 'FAQ card sending failed');
     }
     
-    // Update user state only if card was sent successfully
+    // Update user state
     userInteractionState.set(chatId, {
       step: 'awaiting_faq_selection',
       selectedPage: pageKey,
@@ -4949,194 +4646,62 @@ async function sendInteractiveCard(chatId, cardContent) {
     console.log('🔍 Using receive_id_type:', receiveIdType);
     console.log('🔍 Chat ID format detected:', chatId.substring(0, 3) + '...');
 
-    // For Vercel serverless environment, use ultra-optimized settings
-    const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    const timeoutMs = isServerless ? 8000 : 30000; // Ultra-short timeout for serverless - fail fast
-    
-    console.log('🌐 Environment: ' + (isServerless ? 'Serverless' : 'Local'));
-    console.log('⏱️ Timeout setting:', timeoutMs + 'ms');
-
-    let messageData;
-    
-    // Always use fetch in serverless environments for better reliability
-    if (isServerless) {
-      console.log('🌐 Serverless environment - using direct fetch approach');
-    } else {
-      try {
-        // Try SDK first (only in local environment)
-        console.log('🔄 Attempting to use Lark SDK...');
-        messageData = await larkClient.im.message.create({
-          receive_id_type: receiveIdType,
-          receive_id: chatId,
-          msg_type: 'interactive',
-          content: JSON.stringify(cardContent),
-          uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        });
-        console.log('✅ SDK call successful');
-      } catch (sdkError) {
-        console.error('❌ SDK failed, falling back to fetch:', sdkError.message);
+    try {
+      console.log('🔄 Using Lark SDK for interactive card...');
+      const messageData = await larkClient.im.message.create({
+        receive_id_type: receiveIdType,
+        receive_id: chatId,
+        msg_type: 'interactive',
+        content: JSON.stringify(cardContent),
+        uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      });
+      
+      console.log('✅ SDK interactive card sending successful');
+      console.log('📊 SDK response code:', messageData?.code);
+      
+      if (!messageData || messageData.code !== 0) {
+        const errorInfo = {
+          code: messageData?.code || 'unknown',
+          msg: messageData?.msg || 'No response data',
+          data: messageData?.data,
+          error: messageData?.error
+        };
+        
+        console.error('🚨 Lark SDK Error Details for card:', errorInfo);
+        
+        // Specific error handling for common issues
+        if (messageData?.code === 230002) {
+          console.error('❌ Invalid card format or unsupported message type');
+        } else if (messageData?.code === 99991401) {
+          console.error('❌ Invalid receive_id or chat not found');
+        } else if (messageData?.code === 99991400) {
+          console.error('❌ Missing required parameters');
+        }
+        
+        throw new Error(`Failed to send interactive card via SDK: ${errorInfo.msg} (Code: ${errorInfo.code})`);
       }
-    }
-    
-    // Use fetch approach if SDK failed or in serverless environment
-    if (!messageData) {
-      console.log('🌐 Using fetch for card sending');
-      
-      // Create timeout controller with longer timeout for serverless
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        console.log('⏰ Request timeout triggered after', timeoutMs + 'ms');
-        controller.abort();
-      }, timeoutMs);
-      
-      try {
-        // Step 1: Get access token with timeout
-        console.log('🔑 Getting access token...');
-        const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            app_id: process.env.LARK_APP_ID,
-            app_secret: process.env.LARK_APP_SECRET
-          }),
-          signal: controller.signal
-        });
-        
-        if (!tokenResponse.ok) {
-          throw new Error(`Token request failed: ${tokenResponse.status} ${tokenResponse.statusText}`);
-        }
-        
-        const tokenData = await tokenResponse.json();
-        console.log('🔑 Token response code:', tokenData.code);
-        
-        if (tokenData.code !== 0) {
-          throw new Error(`Failed to get access token: ${tokenData.msg} (Code: ${tokenData.code})`);
-        }
 
-        // Step 2: Send card message with separate timeout
-        const messageController = new AbortController();
-        const messageTimeoutId = setTimeout(() => {
-          console.log('⏰ Message timeout triggered after', timeoutMs + 'ms');
-          messageController.abort();
-        }, timeoutMs);
-        
-        console.log('📤 Sending card message...');
-        const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${tokenData.tenant_access_token}`
-          },
-          body: JSON.stringify({
-            receive_id: chatId,
-            msg_type: 'interactive',
-            content: JSON.stringify(cardContent),
-            uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-          }),
-          signal: messageController.signal
-        });
-        
-        clearTimeout(messageTimeoutId);
-        
-        if (!messageResponse.ok) {
-          throw new Error(`Message request failed: ${messageResponse.status} ${messageResponse.statusText}`);
-        }
-        
-        messageData = await messageResponse.json();
-        console.log('✅ Fetch card sending successful');
-        
-      } catch (fetchError) {
-        clearTimeout(timeoutId);
-        
-        if (fetchError.name === 'AbortError') {
-          console.error('❌ Request aborted due to timeout after', timeoutMs + 'ms');
-          throw new Error(`Card sending timed out after ${timeoutMs}ms in serverless environment. This may be due to network latency or API performance issues.`);
-        } else {
-          console.error('❌ Fetch error:', fetchError.message);
-          throw fetchError;
-        }
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    }
-    
-    console.log('📊 Lark API response code:', messageData?.code);
-    
-    if (!messageData || messageData.code !== 0) {
-      const errorInfo = {
-        code: messageData?.code || 'unknown',
-        msg: messageData?.msg || 'No response data',
-        data: messageData?.data,
-        error: messageData?.error
-      };
+      console.log('✅ Interactive card sent successfully via SDK');
+      console.log('📬 Message ID:', messageData.data?.message_id);
+      console.log('📅 Timestamp:', messageData.data?.create_time);
       
-      console.error('🚨 Lark API Error Details for card:', errorInfo);
+      return messageData;
       
-      // Specific error handling for common issues
-      if (messageData?.code === 230002) {
-        console.error('❌ Invalid card format or unsupported message type');
-      } else if (messageData?.code === 99991401) {
-        console.error('❌ Invalid receive_id or chat not found');
-      } else if (messageData?.code === 99991400) {
-        console.error('❌ Missing required parameters');
-      }
-      
-      throw new Error(`Failed to send interactive card: ${errorInfo.msg} (Code: ${errorInfo.code})`);
+    } catch (sdkError) {
+      console.error('❌ SDK interactive card sending failed:', sdkError.message);
+      throw sdkError;
     }
-
-    console.log('✅ Interactive card sent successfully');
-    console.log('📬 Message ID:', messageData.data?.message_id);
-    console.log('📅 Timestamp:', messageData.data?.create_time);
-    console.log('🌐 Environment:', isServerless ? 'Serverless' : 'Local Development');
-    console.log('🔧 Node version:', process.version);
-    
-    // Extra validation for serverless environment
-    if (isServerless) {
-      console.log('🔍 Serverless card validation:');
-      console.log('  - Card payload size:', JSON.stringify(cardContent).length, 'bytes');
-      console.log('  - Response status code:', messageData.code);
-      console.log('  - Has message data:', !!messageData.data);
-      console.log('  - Message type sent: interactive');
-      console.log('  - Environment variables check:');
-      console.log('    - LARK_APP_ID:', !!process.env.LARK_APP_ID);
-      console.log('    - LARK_APP_SECRET:', !!process.env.LARK_APP_SECRET);
-    }
-    
-    return messageData;
     
   } catch (error) {
     console.error('❌ Error sending interactive card to Lark:', error);
     console.error('📋 Card error details:', error.message);
     console.error('📋 Error stack (first 500 chars):', error.stack?.substring(0, 500));
     
-    // Enhanced error analysis for serverless issues
-    const isServerlessEnv = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    if (error.message.includes('timeout') || error.message.includes('timed out')) {
-      console.error('🕐 TIMEOUT ISSUE DETECTED:');
-      console.error('  - This is likely due to network latency in serverless environment');
-      console.error('  - Consider simplifying the card or using text fallback');
-      console.error('  - Current timeout setting:', isServerlessEnv ? '25000ms' : '30000ms');
-    }
-    
-    if (error.message.includes('fetch failed') || error.message.includes('SocketError') || error.message.includes('EADDRNOTAVAIL')) {
-      console.error('🌐 NETWORK CONNECTIVITY ISSUE DETECTED:');
-      console.error('  - This may be a DNS resolution or connectivity issue');
-      console.error('  - Check Vercel function region and Lark API availability');
-    }
-    
-    if (error.message.includes('token')) {
-      console.error('🔑 TOKEN ISSUE DETECTED:');
-      console.error('  - Check LARK_APP_ID and LARK_APP_SECRET environment variables');
-      console.error('  - Verify Lark app configuration');
-    }
-    
-    // Don't throw the error - instead return failure info for graceful handling
-    return {
-      success: false,
+    // Return structured error response
+    return { 
+      success: false, 
       error: error.message,
-      code: 'card_send_failed'
+      code: error.code || 'CARD_SEND_ERROR'
     };
   }
 }
@@ -5252,37 +4817,80 @@ async function handleCardInteraction(event) {
       }
       
       console.log('❓ FAQ selected:', faq);
-      console.log('🚀 Using hybrid knowledge base for FAQ response...');
+      console.log('🚀 Using pre-built FAQ answers...');
       
       try {
-        // Use hybrid knowledge base (static + database) for FAQ responses
+        // Use pre-built answers from FAST_FAQ_ANSWERS
         let faqAnswer = await getFastFAQAnswer(pageKey, faq);
         
         if (!faqAnswer) {
-          console.log('📝 No knowledge base answer found, generating helpful response...');
+          console.log('📝 No pre-built answer found, using category response...');
           faqAnswer = `I'd be happy to help with "${faq}". This is a common question about ${page.description}. 
 
-Let me search our comprehensive knowledge base for detailed information. Please ask me this question directly: "${faq}" and I'll provide step-by-step guidance from our PM-Next documentation.`;
+Here's some quick guidance for this topic. For more detailed step-by-step instructions, please ask me this question directly: "${faq}"`;
         }
         
-        console.log('📤 Sending hybrid knowledge FAQ response...');
+        console.log('📤 Sending pre-built FAQ response...');
         console.log('📊 Response length:', faqAnswer.length, 'characters');
-        console.log('📊 Contains knowledge base intro:', faqAnswer.includes('Based on our PM-Next knowledge base'));
         
         await sendMessage(chatId, `**${faq}**\n\n${faqAnswer}`);
-        console.log('✅ Hybrid knowledge FAQ response sent successfully');
+        console.log('✅ Pre-built FAQ response sent successfully');
         
         // Reset user state to allow normal bot interaction
         userInteractionState.delete(chatId);
         
-        // Follow up with more detailed info if needed
+        // Send follow-up card with navigation options
         setTimeout(async () => {
           try {
-            await sendMessage(chatId, "💬 Need more details about this topic? Just ask me directly and I'll provide comprehensive assistance!");
+            const followUpCard = {
+              "elements": [
+                {
+                  "tag": "div",
+                  "text": {
+                    "content": "Need more help?",
+                    "tag": "plain_text"
+                  }
+                },
+                {
+                  "tag": "action",
+                  "actions": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "content": "🔙 Back to FAQs",
+                        "tag": "plain_text"
+                      },
+                      "type": "default",
+                      "value": pageKey
+                    },
+                    {
+                      "tag": "button",
+                      "text": {
+                        "content": "🏠 Main Menu",
+                        "tag": "plain_text"
+                      },
+                      "type": "default",
+                      "value": "back_to_pages"
+                    },
+                    {
+                      "tag": "button",
+                      "text": {
+                        "content": "💬 Ask Question",
+                        "tag": "plain_text"
+                      },
+                      "type": "primary",
+                      "value": "custom_question"
+                    }
+                  ]
+                }
+              ]
+            };
+            
+            await sendInteractiveCard(chatId, followUpCard);
           } catch (followUpError) {
-            console.log('⚠️ Follow-up message failed (non-critical):', followUpError.message);
+            console.log('⚠️ Follow-up card failed (non-critical):', followUpError.message);
           }
-        }, 2000);
+        }, 1500);
         
       } catch (error) {
         console.error('❌ ========== FAQ RESPONSE ERROR ==========');
@@ -5328,127 +4936,7 @@ Let me search our comprehensive knowledge base for detailed information. Please 
   }
 }
 
-// Handle text-based page selection (when cards fail)
-async function handleTextPageSelection(chatId, userMessage) {
-  try {
-    console.log('📝 Handling text page selection:', userMessage);
-    
-    const pageKeys = Object.keys(MAIN_PAGES);
-    
-    // Check if user typed a number to select a page
-    const pageNumber = parseInt(userMessage.trim());
-    if (!isNaN(pageNumber) && pageNumber >= 1 && pageNumber <= pageKeys.length) {
-      console.log('🔢 User selected page number:', pageNumber);
-      const selectedPageKey = pageKeys[pageNumber - 1];
-      
-      // Clear page selection mode and show FAQs
-      userInteractionState.delete(chatId);
-      
-      // Send FAQs for selected page (will use text-only if FORCE_TEXT_MODE is enabled)
-      return await sendPageFAQs(chatId, selectedPageKey);
-    }
-    
-    // Handle direct questions - treat as normal AI query
-    console.log('❓ User asking direct question in page selection mode');
-    userInteractionState.delete(chatId); // Clear page selection mode
-    
-    return {
-      response: '', // Will be handled by normal AI flow
-      responseType: 'direct_question',
-      processingTimeMs: 0,
-      continueToAI: true // Signal to continue with normal AI processing
-    };
-    
-  } catch (error) {
-    console.error('❌ Error in text page selection:', error);
-    userInteractionState.delete(chatId);
-    return 'I encountered an error. Please start over by saying "hi" or "help".';
-  }
-}
 
-// Handle text-based FAQ interactions (when cards fail)
-async function handleTextFAQInteraction(chatId, userMessage, pageKey) {
-  try {
-    console.log('💬 Handling text FAQ interaction for:', pageKey, 'Message:', userMessage);
-    
-    const page = MAIN_PAGES[pageKey];
-    if (!page) {
-      console.log('❌ Unknown page key:', pageKey);
-      userInteractionState.delete(chatId);
-      return 'I encountered an error. Please start over by saying "hi" or "help".';
-    }
-    
-    // Check if user typed a number to select a FAQ
-    const faqNumber = parseInt(userMessage.trim());
-    if (!isNaN(faqNumber) && faqNumber >= 1 && faqNumber <= page.faqs.length) {
-      console.log('🔢 User selected FAQ number:', faqNumber);
-      const selectedFAQ = page.faqs[faqNumber - 1];
-      
-      // Get answer using hybrid knowledge base
-      const faqAnswer = await getFastFAQAnswer(pageKey, selectedFAQ);
-      
-      // Clear text FAQ mode
-      userInteractionState.delete(chatId);
-      
-      const response = faqAnswer ? 
-        `**${selectedFAQ}**\n\n${faqAnswer}` :
-        `**${selectedFAQ}**\n\nI can help with this! Please ask me directly: "${selectedFAQ}" and I'll provide detailed step-by-step guidance.`;
-      
-      console.log('✅ Text FAQ response prepared');
-      return {
-        response: response,
-        responseType: 'text_faq_selected',
-        processingTimeMs: Date.now() - Date.now()
-      };
-    }
-    
-    // Check for navigation commands
-    if (/back|menu|pages|start over/i.test(userMessage)) {
-      console.log('🔙 User wants to go back to page selection');
-      userInteractionState.delete(chatId);
-      
-      // Try to send page selection card, fallback to text
-      try {
-        const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
-        if (isServerless) {
-          await sendSimplePageSelectionCard(chatId);
-        } else {
-          await sendPageSelectionMessage(chatId);
-        }
-        
-        return {
-          response: '',
-          responseType: 'page_selection_card',
-          interactiveCard: true,
-          processingTimeMs: 0
-        };
-      } catch (error) {
-        console.log('⚠️ Card sending failed, using text fallback');
-        return 'Please select which page you need help with: Dashboard, Jobs, Candidates, Clients, Calendar, or Claims.';
-      }
-    }
-    
-    // Handle direct questions - treat as normal AI query but with page context
-    console.log('❓ User asking direct question in FAQ mode');
-    userInteractionState.delete(chatId); // Clear FAQ mode
-    
-    // Add page context to the question
-    const contextualMessage = `Regarding ${page.name} (${page.description}): ${userMessage}`;
-    
-    return {
-      response: '', // Will be handled by normal AI flow
-      responseType: 'contextual_question',
-      contextualMessage: contextualMessage,
-      processingTimeMs: 0,
-      continueToAI: true // Signal to continue with normal AI processing
-    };
-    
-  } catch (error) {
-    console.error('❌ Error in text FAQ interaction:', error);
-    userInteractionState.delete(chatId);
-    return 'I encountered an error. Please start over by saying "hi" or "help".';
-  }
-}
 
 // Check if user is new to the conversation
 function isNewConversation(chatId) {
