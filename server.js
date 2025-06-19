@@ -876,6 +876,24 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       return await handleTicketCreationFlow(chatId, userMessage, ticketState, senderId);
     }
     
+    // Check if user is in text-based FAQ mode
+    const userState = userInteractionState.get(chatId);
+    if (userState && userState.step === 'text_faq_mode') {
+      console.log('💬 User in text FAQ mode for page:', userState.selectedPage);
+      const textFAQResult = await handleTextFAQInteraction(chatId, userMessage, userState.selectedPage);
+      
+      // If it's a direct response, return it
+      if (textFAQResult && typeof textFAQResult === 'object' && !textFAQResult.continueToAI) {
+        return textFAQResult;
+      }
+      
+      // If it signals to continue with AI, use the contextual message
+      if (textFAQResult && textFAQResult.continueToAI && textFAQResult.contextualMessage) {
+        console.log('🔄 Continuing to AI with contextual message:', textFAQResult.contextualMessage);
+        userMessage = textFAQResult.contextualMessage; // Use the enhanced message for AI processing
+      }
+    }
+    
     // Check if user is confirming they want to create a ticket
     const isConfirmingTicket = checkTicketConfirmation(context, userMessage);
     if (isConfirmingTicket) {
@@ -4563,82 +4581,149 @@ async function sendPageSelectionMessage(chatId) {
 
 // Send FAQ options for selected page
 async function sendPageFAQs(chatId, pageKey) {
+  const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  
   try {
     console.log('📋 Sending FAQ options for page:', pageKey);
+    console.log('🌐 Environment: ' + (isServerless ? 'Serverless' : 'Local'));
     
     const page = MAIN_PAGES[pageKey];
     if (!page) {
       throw new Error(`Unknown page: ${pageKey}`);
     }
     
-    const cardContent = {
-      "config": {
-        "wide_screen_mode": true
-      },
-      "header": {
-        "template": "green",
-        "title": {
-          "content": `${page.name} - FAQs`,
-          "tag": "plain_text"
-        }
-      },
-      "elements": [
-        {
-          "tag": "div",
-          "text": {
-            "content": `Here are common questions about ${page.description}:`,
-            "tag": "plain_text"
-          }
-        },
-        {
-          "tag": "hr"
-        },
-        ...page.faqs.map((faq, index) => ({
-          "tag": "action",
-          "actions": [{
-            "tag": "button",
+    // For serverless environments, use simpler card structure to avoid timeouts
+    let cardContent;
+    
+    if (isServerless) {
+      // Simplified card for serverless - fewer elements, smaller payload
+      console.log('🌐 Using simplified FAQ card for serverless environment');
+      cardContent = {
+        "elements": [
+          {
+            "tag": "div",
             "text": {
-              "content": faq,
+              "content": `${page.name} - FAQs`,
               "tag": "plain_text"
-            },
-            "type": "default",
-            "value": `faq_${pageKey}_${index}`
-          }]
-        })),
-        {
-          "tag": "hr"
-        },
-        {
-          "tag": "action",
-          "actions": [
-            {
+            }
+          },
+          // Only show first 3 FAQs for faster loading
+          ...page.faqs.slice(0, 3).map((faq, index) => ({
+            "tag": "action",
+            "actions": [{
               "tag": "button",
               "text": {
-                "content": "🔙 Back to Page Selection",
-                "tag": "plain_text"
-              },
-              "type": "default",
-              "value": "back_to_pages"
-            },
-            {
-              "tag": "button",
-              "text": {
-                "content": "💬 Ask Custom Question",
+                "content": faq.length > 40 ? faq.substring(0, 37) + '...' : faq,
                 "tag": "plain_text"
               },
               "type": "primary",
-              "value": "custom_question"
+              "value": `faq_${pageKey}_${index}`
+            }]
+          })),
+          {
+            "tag": "action",
+            "actions": [
+              {
+                "tag": "button",
+                "text": {
+                  "content": "🔙 Back",
+                  "tag": "plain_text"
+                },
+                "type": "default",
+                "value": "back_to_pages"
+              }
+            ]
+          }
+        ]
+      };
+    } else {
+      // Full card for local environments
+      cardContent = {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "header": {
+          "template": "green",
+          "title": {
+            "content": `${page.name} - FAQs`,
+            "tag": "plain_text"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": `Here are common questions about ${page.description}:`,
+              "tag": "plain_text"
             }
-          ]
-        }
-      ]
-    };
+          },
+          {
+            "tag": "hr"
+          },
+          ...page.faqs.map((faq, index) => ({
+            "tag": "action",
+            "actions": [{
+              "tag": "button",
+              "text": {
+                "content": faq,
+                "tag": "plain_text"
+              },
+              "type": "default",
+              "value": `faq_${pageKey}_${index}`
+            }]
+          })),
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "action",
+            "actions": [
+              {
+                "tag": "button",
+                "text": {
+                  "content": "🔙 Back to Page Selection",
+                  "tag": "plain_text"
+                },
+                "type": "default",
+                "value": "back_to_pages"
+              },
+              {
+                "tag": "button",
+                "text": {
+                  "content": "💬 Ask Custom Question",
+                  "tag": "plain_text"
+                },
+                "type": "primary",
+                "value": "custom_question"
+              }
+            ]
+          }
+        ]
+      };
+    }
 
-    const result = await sendInteractiveCard(chatId, cardContent);
+    console.log('📦 FAQ card payload size:', JSON.stringify(cardContent).length, 'bytes');
+    
+    // Set a shorter timeout for FAQ cards in serverless
+    const maxWaitTime = isServerless ? 15000 : 25000; // 15s for serverless, 25s for local
+    console.log('⏱️ Using timeout:', maxWaitTime + 'ms');
+    
+    // Create a timeout promise to race against card sending
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`FAQ card timeout after ${maxWaitTime}ms - using text fallback`));
+      }, maxWaitTime);
+    });
+    
+    // Race between card sending and timeout
+    const result = await Promise.race([
+      sendInteractiveCard(chatId, cardContent),
+      timeoutPromise
+    ]);
     
     // Check if card sending was successful
     if (result && result.success === false) {
-      console.log('⚠️ FAQ card sending failed, using text fallback');
+      console.log('⚠️ FAQ card sending failed gracefully, using text fallback');
       throw new Error(result.error || 'FAQ card sending failed');
     }
     
@@ -4650,21 +4735,36 @@ async function sendPageFAQs(chatId, pageKey) {
     });
     
     console.log('✅ FAQ options sent successfully');
-    return { success: true, cardType: 'faq_options' };
+    return { success: true, cardType: isServerless ? 'simplified_faq' : 'full_faq' };
     
   } catch (error) {
     console.error('❌ Error sending FAQ options:', error.message || error);
-    console.log('🔄 Using text fallback for FAQ options...');
+    console.log('🔄 Using immediate text fallback for FAQ options...');
     
-    // Fallback to text message
+    // Immediate fallback to text message
     try {
       const page = MAIN_PAGES[pageKey];
-      let message = `${page.name} - Frequently Asked Questions:\n\n`;
+      let message = `**${page.name} - Common Questions:**\n\n`;
+      
       page.faqs.forEach((faq, index) => {
-        message += `${index + 1}. ${faq}\n`;
+        message += `**${index + 1}.** ${faq}\n\n`;
       });
-      message += '\nPlease type your question or ask me anything about this page!';
+      
+      if (isServerless) {
+        message += `💬 **Type the number (1-${page.faqs.length}) or ask your question directly!**`;
+      } else {
+        message += '💬 **Please type your question or ask me anything about this page!**';
+      }
+      
       await sendMessage(chatId, message);
+      
+      // Set user state for text-based FAQ interaction
+      userInteractionState.set(chatId, {
+        step: 'text_faq_mode',
+        selectedPage: pageKey,
+        awaiting: true
+      });
+      
       console.log('✅ FAQ text fallback sent successfully');
       return { success: true, cardType: 'text_fallback' };
     } catch (textError) {
@@ -4860,11 +4960,12 @@ async function sendInteractiveCard(chatId, cardContent) {
     console.error('📋 Error stack (first 500 chars):', error.stack?.substring(0, 500));
     
     // Enhanced error analysis for serverless issues
+    const isServerlessEnv = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
     if (error.message.includes('timeout') || error.message.includes('timed out')) {
       console.error('🕐 TIMEOUT ISSUE DETECTED:');
       console.error('  - This is likely due to network latency in serverless environment');
       console.error('  - Consider simplifying the card or using text fallback');
-      console.error('  - Current timeout setting:', isServerless ? '25000ms' : '30000ms');
+      console.error('  - Current timeout setting:', isServerlessEnv ? '25000ms' : '30000ms');
     }
     
     if (error.message.includes('fetch failed') || error.message.includes('SocketError') || error.message.includes('EADDRNOTAVAIL')) {
@@ -5072,6 +5173,90 @@ Let me search our comprehensive knowledge base for detailed information. Please 
     console.error('❌ Error handling card interaction:', error);
     console.error('❌ Error stack:', error.stack);
     console.error('❌ ============================================');
+  }
+}
+
+// Handle text-based FAQ interactions (when cards fail)
+async function handleTextFAQInteraction(chatId, userMessage, pageKey) {
+  try {
+    console.log('💬 Handling text FAQ interaction for:', pageKey, 'Message:', userMessage);
+    
+    const page = MAIN_PAGES[pageKey];
+    if (!page) {
+      console.log('❌ Unknown page key:', pageKey);
+      userInteractionState.delete(chatId);
+      return 'I encountered an error. Please start over by saying "hi" or "help".';
+    }
+    
+    // Check if user typed a number to select a FAQ
+    const faqNumber = parseInt(userMessage.trim());
+    if (!isNaN(faqNumber) && faqNumber >= 1 && faqNumber <= page.faqs.length) {
+      console.log('🔢 User selected FAQ number:', faqNumber);
+      const selectedFAQ = page.faqs[faqNumber - 1];
+      
+      // Get answer using hybrid knowledge base
+      const faqAnswer = await getFastFAQAnswer(pageKey, selectedFAQ);
+      
+      // Clear text FAQ mode
+      userInteractionState.delete(chatId);
+      
+      const response = faqAnswer ? 
+        `**${selectedFAQ}**\n\n${faqAnswer}` :
+        `**${selectedFAQ}**\n\nI can help with this! Please ask me directly: "${selectedFAQ}" and I'll provide detailed step-by-step guidance.`;
+      
+      console.log('✅ Text FAQ response prepared');
+      return {
+        response: response,
+        responseType: 'text_faq_selected',
+        processingTimeMs: Date.now() - Date.now()
+      };
+    }
+    
+    // Check for navigation commands
+    if (/back|menu|pages|start over/i.test(userMessage)) {
+      console.log('🔙 User wants to go back to page selection');
+      userInteractionState.delete(chatId);
+      
+      // Try to send page selection card, fallback to text
+      try {
+        const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
+        if (isServerless) {
+          await sendSimplePageSelectionCard(chatId);
+        } else {
+          await sendPageSelectionMessage(chatId);
+        }
+        
+        return {
+          response: '',
+          responseType: 'page_selection_card',
+          interactiveCard: true,
+          processingTimeMs: 0
+        };
+      } catch (error) {
+        console.log('⚠️ Card sending failed, using text fallback');
+        return 'Please select which page you need help with: Dashboard, Jobs, Candidates, Clients, Calendar, or Claims.';
+      }
+    }
+    
+    // Handle direct questions - treat as normal AI query but with page context
+    console.log('❓ User asking direct question in FAQ mode');
+    userInteractionState.delete(chatId); // Clear FAQ mode
+    
+    // Add page context to the question
+    const contextualMessage = `Regarding ${page.name} (${page.description}): ${userMessage}`;
+    
+    return {
+      response: '', // Will be handled by normal AI flow
+      responseType: 'contextual_question',
+      contextualMessage: contextualMessage,
+      processingTimeMs: 0,
+      continueToAI: true // Signal to continue with normal AI processing
+    };
+    
+  } catch (error) {
+    console.error('❌ Error in text FAQ interaction:', error);
+    userInteractionState.delete(chatId);
+    return 'I encountered an error. Please start over by saying "hi" or "help".';
   }
 }
 
