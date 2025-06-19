@@ -552,9 +552,19 @@ app.post('/lark/events', async (req, res) => {
       processedEvents.add(eventId);
       
       // Handle card interaction asynchronously to respond immediately
-      handleCardInteraction(event).catch(error => 
-        console.error('Error processing card interaction:', error)
-      );
+      handleCardInteraction(event).catch(async (error) => {
+        console.error('❌ Error processing card interaction:', error);
+        
+        // Try to send a fallback error message to the user
+        try {
+          const chatId = event.context?.open_chat_id;
+          if (chatId) {
+            await sendMessage(chatId, 'Sorry, I encountered an issue processing your request. Please try again or type your question directly.');
+          }
+        } catch (fallbackError) {
+          console.error('❌ Even fallback message failed:', fallbackError.message);
+        }
+      });
       
       // Return success immediately for card interactions (optimized for serverless)
       console.log('✅ Sending immediate webhook response');
@@ -1435,6 +1445,7 @@ async function sendMessage(chatId, message) {
     }
 
     console.log('✅ Message sent successfully');
+    return { success: true, messageId: messageData.data?.message_id };
   } catch (error) {
     console.error('❌ Error sending message to Lark:', error);
     console.error('📋 Error details:', error.message);
@@ -1444,6 +1455,9 @@ async function sendMessage(chatId, message) {
       console.error('🌐 Network connectivity issue detected');
       console.error('💡 This may be a DNS resolution or connectivity issue');
     }
+    
+    // Re-throw the error so it can be handled by calling functions
+    throw error;
   }
 }
 
@@ -4644,7 +4658,8 @@ async function sendTextOnlyFAQs(chatId, pageKey) {
     message += `💬 **Type a number (1-${page.faqs.length}) or ask your question directly!**\n\n`;
     message += `🔙 Type "back" for main menu`;
     
-    await sendMessage(chatId, message);
+    const result = await sendMessage(chatId, message);
+    console.log('📊 Message send result:', result);
     
     // Set user state for text-based FAQ interaction
     userInteractionState.set(chatId, {
@@ -4654,7 +4669,7 @@ async function sendTextOnlyFAQs(chatId, pageKey) {
     });
     
     console.log('✅ Text-only FAQs sent successfully');
-    return { success: true, cardType: 'text_only' };
+    return { success: true, cardType: 'text_only', messageId: result?.messageId };
     
   } catch (error) {
     console.error('❌ Error sending text-only FAQs:', error);
