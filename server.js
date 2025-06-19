@@ -1279,8 +1279,12 @@ async function getLarkUserInfo(userId) {
       console.log('🔍 Calling Lark SDK for user info...');
       
       const response = await larkClient.contact.user.get({
-        user_id: actualUserId,
-        user_id_type: userIdType
+        path: {
+          user_id: actualUserId
+        },
+        params: {
+          user_id_type: userIdType
+        }
       });
 
       console.log('📊 User SDK response:', response);
@@ -1343,15 +1347,24 @@ async function sendMessage(chatId, message) {
 
     try {
       console.log('🔄 Using Lark SDK for message sending...');
-      const messageData = await larkClient.im.message.create({
-        receive_id_type: receiveIdType,
-        receive_id: chatId,
-        msg_type: 'text',
-        content: JSON.stringify({
-          text: message
-        }),
-        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      });
+      
+      const messageParams = {
+        params: {
+          receive_id_type: receiveIdType
+        },
+        data: {
+          receive_id: chatId,
+          msg_type: 'text',
+          content: JSON.stringify({
+            text: message
+          }),
+          uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        }
+      };
+      
+      console.log('📊 SDK Message Parameters:', JSON.stringify(messageParams, null, 2));
+      
+      const messageData = await larkClient.im.message.create(messageParams);
       
       console.log('✅ SDK message sending successful');
       console.log('📊 SDK response code:', messageData?.code);
@@ -1427,9 +1440,93 @@ app.get('/debug-env', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
+    timestamp: new Date().toISOString(),
     service: 'PM-Next Lark Bot',
-    timestamp: new Date().toISOString()
+    sdk_version: 'lark-sdk-1.0.0',
+    environment: {
+      hasAppId: !!process.env.LARK_APP_ID,
+      hasAppSecret: !!process.env.LARK_APP_SECRET,
+      hasVerificationToken: !!process.env.LARK_VERIFICATION_TOKEN
+    }
   });
+});
+
+// Test SDK endpoint
+app.post('/test-sdk', async (req, res) => {
+  try {
+    console.log('🧪 Testing SDK configuration...');
+    
+    const { chatId = 'test_chat_id', messageType = 'text' } = req.body;
+    
+    if (messageType === 'text') {
+      const testParams = {
+        params: {
+          receive_id_type: 'chat_id'
+        },
+        data: {
+          receive_id: chatId,
+          msg_type: 'text',
+          content: JSON.stringify({
+            text: '🧪 SDK Test Message - This is a test to verify SDK configuration'
+          }),
+          uuid: `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        }
+      };
+      
+      console.log('📊 Test SDK Parameters:', JSON.stringify(testParams, null, 2));
+      
+      res.json({
+        success: true,
+        message: 'SDK parameters validated',
+        parameters: testParams,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      const testCardContent = {
+        "config": { "wide_screen_mode": true },
+        "header": {
+          "template": "blue",
+          "title": { "content": "🧪 SDK Test Card", "tag": "plain_text" }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": { "content": "SDK configuration test successful!", "tag": "plain_text" }
+          }
+        ]
+      };
+      
+      const testParams = {
+        params: {
+          receive_id_type: 'chat_id'
+        },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(testCardContent),
+          uuid: `test_card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        }
+      };
+      
+      console.log('📊 Test Card SDK Parameters:', JSON.stringify(testParams, null, 2));
+      
+      res.json({
+        success: true,
+        message: 'SDK card parameters validated',
+        parameters: testParams,
+        cardContent: testCardContent,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ SDK test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Test database connection endpoint
@@ -3086,7 +3183,9 @@ async function getParentMessageContent(messageId) {
     try {
       console.log('🔄 Using Lark SDK for message content...');
       const response = await larkClient.im.message.get({
-        message_id: messageId
+        path: {
+          message_id: messageId
+        }
       });
 
       console.log('📊 Parent message SDK response:', response);
@@ -4648,13 +4747,23 @@ async function sendInteractiveCard(chatId, cardContent) {
 
     try {
       console.log('🔄 Using Lark SDK for interactive card...');
-      const messageData = await larkClient.im.message.create({
-        receive_id_type: receiveIdType,
-        receive_id: chatId,
-        msg_type: 'interactive',
-        content: JSON.stringify(cardContent),
-        uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      });
+      
+      const cardParams = {
+        params: {
+          receive_id_type: receiveIdType
+        },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(cardContent),
+          uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        }
+      };
+      
+      console.log('📊 SDK Card Parameters:', JSON.stringify(cardParams, null, 2));
+      console.log('📦 Card Content Preview:', JSON.stringify(cardContent, null, 2).substring(0, 500) + '...');
+      
+      const messageData = await larkClient.im.message.create(cardParams);
       
       console.log('✅ SDK interactive card sending successful');
       console.log('📊 SDK response code:', messageData?.code);
