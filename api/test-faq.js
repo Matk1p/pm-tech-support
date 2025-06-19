@@ -22,30 +22,19 @@ module.exports = async (req, res) => {
       throw new Error('Missing Lark credentials');
     }
     
-    // Step 1: Get access token
-    console.log('🧪 Step 1: Getting access token...');
-    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        app_id: process.env.LARK_APP_ID,
-        app_secret: process.env.LARK_APP_SECRET,
-      }),
-      signal: AbortSignal.timeout(10000)
+    // Step 1: Test Lark SDK initialization
+    console.log('🧪 Step 1: Testing Lark SDK...');
+    const { Client } = require('@larksuiteoapi/node-sdk');
+    
+    const larkClient = new Client({
+      appId: process.env.LARK_APP_ID,
+      appSecret: process.env.LARK_APP_SECRET,
+      appType: 'self_built',
+      domain: 'larksuite'
     });
-
-    if (!tokenResponse.ok) {
-      throw new Error(`Token request failed: ${tokenResponse.status} ${tokenResponse.statusText}`);
-    }
-
-    const tokenData = await tokenResponse.json();
-    console.log('🧪 Token response:', tokenData);
-
-    if (tokenData.code !== 0) {
-      throw new Error(`Failed to get access token: ${tokenData.msg}`);
-    }
+    
+    console.log('🧪 SDK client created:', !!larkClient);
+    console.log('🧪 SDK methods available:', !!larkClient.im?.message?.create);
 
     // Step 2: Test OpenAI API
     console.log('🧪 Step 2: Testing OpenAI API...');
@@ -75,10 +64,11 @@ module.exports = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'FAQ test completed successfully',
-      results: {
-        tokenTest: {
+              results: {
+        larkSdkTest: {
           success: true,
-          tokenReceived: !!tokenData.tenant_access_token
+          clientInitialized: !!larkClient,
+          methodsAvailable: !!larkClient.im?.message?.create
         },
         openaiTest: {
           success: true,
