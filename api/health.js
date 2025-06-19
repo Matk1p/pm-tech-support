@@ -1,23 +1,52 @@
+// Health check endpoint
 module.exports = async (req, res) => {
+  console.log('🏥 Health check endpoint accessed');
+  console.log('🏥 Method:', req.method);
+  console.log('🏥 Timestamp:', new Date().toISOString());
+  
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  // Handle preflight requests
+  
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
-
-  if (req.method === 'GET') {
-    return res.json({ 
-      status: 'healthy', 
-      service: 'PM-Next Lark Bot',
+  
+  try {
+    const healthStatus = {
+      status: 'healthy',
       timestamp: new Date().toISOString(),
-      environment: 'vercel',
-      version: '1.0.0'
+      environment: {
+        nodeVersion: process.version,
+        platform: process.platform,
+        uptime: process.uptime(),
+        memoryUsage: process.memoryUsage()
+      },
+      config: {
+        hasLarkAppId: !!process.env.LARK_APP_ID,
+        hasLarkAppSecret: !!process.env.LARK_APP_SECRET,
+        hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+        vercelRegion: process.env.VERCEL_REGION || 'unknown',
+        vercelUrl: process.env.VERCEL_URL || 'unknown'
+      },
+      endpoints: [
+        '/api/health',
+        '/api/test-network',
+        '/api/webhook'
+      ]
+    };
+    
+    console.log('🏥 Health check successful:', healthStatus);
+    
+    res.status(200).json(healthStatus);
+    
+  } catch (error) {
+    console.error('🏥 Health check error:', error);
+    res.status(500).json({
+      status: 'unhealthy',
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
-
-  return res.status(405).json({ error: 'Method not allowed' });
 }; 
