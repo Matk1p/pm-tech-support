@@ -830,7 +830,7 @@ async function handleMessage(event) {
       if (aiResponse && !responseMetadata.interactiveCard) {
         console.log('📤 Sending response to Lark...');
         // Send response back to Lark
-        await sendMessage(chatId, aiResponse);
+        await sendMessage(chat_id, aiResponse);
         console.log('🎉 Message sent successfully!');
       } else if (responseMetadata.interactiveCard) {
         console.log('🎯 Interactive card already sent, skipping text response');
