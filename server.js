@@ -818,7 +818,7 @@ async function handleMessage(event) {
       if (aiResponse && !responseMetadata.interactiveCard) {
         console.log('📤 Sending response to Lark...');
         // Send response back to Lark
-        await sendMessage(chatId, aiResponse);
+        await sendMessage(chat_id, aiResponse);
         console.log('🎉 Message sent successfully!');
       } else if (responseMetadata.interactiveCard) {
         console.log('🎯 Interactive card already sent, skipping text response');
@@ -826,7 +826,7 @@ async function handleMessage(event) {
       
       // Log the bot response with detailed metadata
       const botLogData = {
-        chatId: chatId,
+        chatId: chat_id,
         message: aiResponse,
         responseType: responseMetadata.responseType || 'ai_generated',
         processingTimeMs: responseMetadata.processingTimeMs || totalProcessingTime,
