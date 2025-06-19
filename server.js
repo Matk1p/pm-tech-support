@@ -221,7 +221,7 @@ app.use('/api/analytics', analyticsAPI);
 const larkClient = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
-  appType: 'self-built',
+  appType: 'self_built',
   domain: 'larksuite'
 });
 
