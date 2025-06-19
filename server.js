@@ -901,23 +901,14 @@ async function generateAIResponse(userMessage, chat_id, senderId = null) {
     const userState = userInteractionState.get(chat_id);
     if (userState && userState.step === 'text_page_selection') {
       console.log('📝 User in text page selection mode');
-      return await handleTextPageSelection(chat_id, userMessage);
+      // Clear the user state to allow normal AI interaction
+      userInteractionState.delete(chat_id);
     }
     
     if (userState && userState.step === 'text_faq_mode') {
       console.log('💬 User in text FAQ mode for page:', userState.selectedPage);
-      const textFAQResult = await handleTextFAQInteraction(chat_id, userMessage, userState.selectedPage);
-      
-      // If it's a direct response, return it
-      if (textFAQResult && typeof textFAQResult === 'object' && !textFAQResult.continueToAI) {
-        return textFAQResult;
-      }
-      
-      // If it signals to continue with AI, use the contextual message
-      if (textFAQResult && textFAQResult.continueToAI && textFAQResult.contextualMessage) {
-        console.log('🔄 Continuing to AI with contextual message:', textFAQResult.contextualMessage);
-        userMessage = textFAQResult.contextualMessage; // Use the enhanced message for AI processing
-      }
+      // Clear the user state to allow normal AI interaction
+      userInteractionState.delete(chat_id);
     }
     
     // Check if user is confirming they want to create a ticket
