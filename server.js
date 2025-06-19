@@ -4666,9 +4666,9 @@ async function sendTextOnlyFAQs(chatId, pageKey) {
 async function sendPageFAQs(chatId, pageKey) {
   const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
   
-  // In serverless, skip cards entirely and go straight to text for reliability
-  if (isServerless && process.env.FORCE_TEXT_MODE === 'true') {
-    console.log('⚡ FORCE_TEXT_MODE enabled - skipping cards entirely');
+  // TEMPORARY FIX: Always use text mode in serverless for reliability
+  if (isServerless) {
+    console.log('⚡ Using text-only FAQ mode for serverless reliability');
     return await sendTextOnlyFAQs(chatId, pageKey);
   }
   
