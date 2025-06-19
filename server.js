@@ -217,13 +217,12 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Analytics API routes
 app.use('/api/analytics', analyticsAPI);
 
-// Initialize Lark client
+// Initialize Lark client with explicit domain configuration
 const larkClient = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
   appType: 'self-built',
-  domain: 'larksuite', // Use 'larksuite' for global domain
-  loggerLevel: 'debug'
+  domain: 'larksuite'
 });
 
 // Initialize OpenAI client
@@ -1273,18 +1272,63 @@ async function sendMessage(chatId, message) {
       receiveIdType = 'chat_id';
     }
 
-    // Use Lark SDK instead of raw fetch for better serverless compatibility
-    const messageData = await larkClient.im.message.create({
-      receive_id_type: receiveIdType,
-      receive_id: chatId,
-      msg_type: 'text',
-      content: JSON.stringify({
-        text: message
-      }),
-      uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    });
+    let messageData;
     
-    console.log('📊 Lark SDK response data:', JSON.stringify(messageData, null, 2));
+    try {
+      // Try SDK first
+      console.log('🔄 Attempting to use Lark SDK...');
+      messageData = await larkClient.im.message.create({
+        receive_id_type: receiveIdType,
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({
+          text: message
+        }),
+        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      });
+      console.log('✅ SDK call successful');
+    } catch (sdkError) {
+      console.error('❌ SDK failed, falling back to raw fetch:', sdkError.message);
+      
+      // Fallback to raw fetch if SDK fails
+      const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          app_id: process.env.LARK_APP_ID,
+          app_secret: process.env.LARK_APP_SECRET
+        })
+      });
+
+      const tokenData = await tokenResponse.json();
+      
+      if (tokenData.code !== 0) {
+        throw new Error(`Failed to get access token: ${tokenData.msg}`);
+      }
+
+      const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokenData.tenant_access_token}`
+        },
+        body: JSON.stringify({
+          receive_id: chatId,
+          msg_type: 'text',
+          content: JSON.stringify({
+            text: message
+          }),
+          uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        })
+      });
+
+      messageData = await messageResponse.json();
+      console.log('✅ Fallback fetch successful');
+    }
+    
+    console.log('📊 Lark API response data:', JSON.stringify(messageData, null, 2));
     
     if (messageData.code !== 0) {
       console.error('🚨 Lark API Error Details:', {
@@ -1296,15 +1340,15 @@ async function sendMessage(chatId, message) {
       throw new Error(`Failed to send message: ${messageData.msg || 'Unknown error'}`);
     }
 
-    console.log('✅ Message sent successfully via SDK:', messageData);
+    console.log('✅ Message sent successfully');
   } catch (error) {
     console.error('❌ Error sending message to Lark:', error);
     console.error('📋 Error details:', error.message);
     
     // Add additional debugging for serverless issues
-    if (error.message.includes('fetch failed') || error.message.includes('SocketError')) {
-      console.error('🌐 Network connectivity issue detected in serverless environment');
-      console.error('💡 This may be a temporary Vercel/Lark connectivity issue');
+    if (error.message.includes('fetch failed') || error.message.includes('SocketError') || error.message.includes('EADDRNOTAVAIL')) {
+      console.error('🌐 Network connectivity issue detected');
+      console.error('💡 This may be a DNS resolution or connectivity issue');
     }
   }
 }
@@ -3369,16 +3413,59 @@ async function sendInteractiveCard(chatId, cardContent) {
     console.log('📦 Interactive card payload:', JSON.stringify(cardContent, null, 2));
     console.log('🔍 Using receive_id_type:', receiveIdType);
 
-    // Use Lark SDK instead of raw fetch for better serverless compatibility
-    const messageData = await larkClient.im.message.create({
-      receive_id_type: receiveIdType,
-      receive_id: chatId,
-      msg_type: 'interactive',
-      content: JSON.stringify(cardContent),
-      uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    });
+    let messageData;
     
-    console.log('📊 Lark SDK response data for card:', JSON.stringify(messageData, null, 2));
+    try {
+      // Try SDK first
+      console.log('🔄 Attempting to use Lark SDK...');
+      messageData = await larkClient.im.message.create({
+        receive_id_type: receiveIdType,
+        receive_id: chatId,
+        msg_type: 'interactive',
+        content: JSON.stringify(cardContent),
+        uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      });
+      console.log('✅ SDK call successful');
+    } catch (sdkError) {
+      console.error('❌ SDK failed, falling back to raw fetch:', sdkError.message);
+      
+      // Fallback to raw fetch if SDK fails
+      const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          app_id: process.env.LARK_APP_ID,
+          app_secret: process.env.LARK_APP_SECRET
+        })
+      });
+
+      const tokenData = await tokenResponse.json();
+      
+      if (tokenData.code !== 0) {
+        throw new Error(`Failed to get access token: ${tokenData.msg}`);
+      }
+
+      const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokenData.tenant_access_token}`
+        },
+        body: JSON.stringify({
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(cardContent),
+          uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        })
+      });
+
+      messageData = await messageResponse.json();
+      console.log('✅ Fallback fetch successful');
+    }
+    
+    console.log('📊 Lark API response data for card:', JSON.stringify(messageData, null, 2));
     
     if (messageData.code !== 0) {
       console.error('🚨 Lark API Error Details for card:', {
@@ -3390,15 +3477,15 @@ async function sendInteractiveCard(chatId, cardContent) {
       throw new Error(`Failed to send interactive card: ${messageData.msg || 'Unknown error'}`);
     }
 
-    console.log('✅ Interactive card sent successfully via SDK');
+    console.log('✅ Interactive card sent successfully');
   } catch (error) {
     console.error('❌ Error sending interactive card to Lark:', error);
     console.error('📋 Card error details:', error.message);
     
     // Add additional debugging for serverless issues
-    if (error.message.includes('fetch failed') || error.message.includes('SocketError')) {
-      console.error('🌐 Network connectivity issue detected in serverless environment');
-      console.error('💡 This may be a temporary Vercel/Lark connectivity issue');
+    if (error.message.includes('fetch failed') || error.message.includes('SocketError') || error.message.includes('EADDRNOTAVAIL')) {
+      console.error('🌐 Network connectivity issue detected');
+      console.error('💡 This may be a DNS resolution or connectivity issue');
     }
     
     throw error;

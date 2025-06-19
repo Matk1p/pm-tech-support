@@ -449,16 +449,59 @@ async function sendInteractiveCard(chatId, cardContent) {
     console.log('📦 Interactive card payload:', JSON.stringify(cardContent, null, 2));
     console.log('🔍 Using receive_id_type:', receiveIdType);
 
-    // Use Lark SDK instead of raw fetch for better serverless compatibility
-    const messageData = await larkClient.im.message.create({
-      receive_id_type: receiveIdType,
-      receive_id: chatId,
-      msg_type: 'interactive',
-      content: JSON.stringify(cardContent),
-      uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    });
+    let messageData;
     
-    console.log('📊 Lark SDK response data for card:', JSON.stringify(messageData, null, 2));
+    try {
+      // Try SDK first
+      console.log('🔄 Attempting to use Lark SDK...');
+      messageData = await larkClient.im.message.create({
+        receive_id_type: receiveIdType,
+        receive_id: chatId,
+        msg_type: 'interactive',
+        content: JSON.stringify(cardContent),
+        uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      });
+      console.log('✅ SDK call successful');
+    } catch (sdkError) {
+      console.error('❌ SDK failed, falling back to raw fetch:', sdkError.message);
+      
+      // Fallback to raw fetch if SDK fails
+      const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          app_id: process.env.LARK_APP_ID,
+          app_secret: process.env.LARK_APP_SECRET
+        })
+      });
+
+      const tokenData = await tokenResponse.json();
+      
+      if (tokenData.code !== 0) {
+        throw new Error(`Failed to get access token: ${tokenData.msg}`);
+      }
+
+      const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokenData.tenant_access_token}`
+        },
+        body: JSON.stringify({
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(cardContent),
+          uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        })
+      });
+
+      messageData = await messageResponse.json();
+      console.log('✅ Fallback fetch successful');
+    }
+    
+    console.log('📊 Lark API response data for card:', JSON.stringify(messageData, null, 2));
     
     if (messageData.code !== 0) {
       console.error('🚨 Lark API Error Details for card:', {
