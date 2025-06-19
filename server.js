@@ -539,6 +539,7 @@ app.post('/lark/events', async (req, res) => {
       console.log('🎯 Card interaction event received from header');
       console.log('🎯 Responding immediately to prevent timeout');
       console.log('📋 Card event structure:', Object.keys(event));
+      console.log('🔍 Event details:', JSON.stringify(event, null, 2));
       
       // Check for duplicate events
       const eventId = header.event_id;
@@ -4123,17 +4124,31 @@ async function handleCardInteraction(event) {
     
     if (event.open_chat_id) {
       // Standard format
+      console.log('🔍 Using standard format (event.open_chat_id)');
       chatId = event.open_chat_id;
       userId = event.open_id || event.user_id;
       actionValue = event.action?.value;
     } else if (event.context) {
       // Lark webhook format with context and operator
+      console.log('🔍 Using context format (event.context)');
       chatId = event.context.open_chat_id;
       userId = event.operator?.open_id || event.operator?.user_id;
       actionValue = event.action?.value;
     } else {
       console.log('⚠️ Unknown card interaction format');
-      return;
+      console.log('🔍 Available event properties:', Object.keys(event));
+      console.log('🔍 Checking for alternative formats...');
+      
+      // Try to find chat_id and action in alternative formats
+      if (event.chat_id || event.message?.chat_id) {
+        console.log('🔍 Found alternative chat_id format');
+        chatId = event.chat_id || event.message?.chat_id;
+        actionValue = event.action?.value || event.message?.action?.value;
+        userId = event.user_id || event.sender?.user_id;
+      } else {
+        console.log('❌ Could not extract chat_id from event');
+        return;
+      }
     }
     
     // Clean up action value (remove extra quotes if present)
@@ -4151,19 +4166,28 @@ async function handleCardInteraction(event) {
     console.log('🔍 Processing action:', actionValue);
     console.log('💬 Chat ID:', chatId);
     console.log('👤 User ID:', userId);
+    console.log('📊 MAIN_PAGES keys:', Object.keys(MAIN_PAGES));
+    console.log('🎯 Action matches page?', Object.keys(MAIN_PAGES).includes(actionValue));
     
     // Handle different button actions
     if (Object.keys(MAIN_PAGES).includes(actionValue)) {
       // Page selection
       console.log('📄 Page selected:', actionValue);
+      console.log('📋 Sending FAQ options for page:', actionValue);
+      
       try {
         const result = await sendPageFAQs(chatId, actionValue);
+        console.log('📊 FAQ sending result:', result);
+        
         if (result && result.success === false) {
           console.log('⚠️ FAQ page sending failed, sending error message');
           await sendMessage(chatId, `Sorry, I had trouble showing the FAQ options for ${actionValue}. Please ask me directly about ${actionValue} or try again later.`);
+        } else {
+          console.log('✅ FAQ card should have been sent successfully');
         }
       } catch (error) {
         console.error('❌ Error in page FAQ handling:', error.message);
+        console.error('❌ Error stack:', error.stack);
         await sendMessage(chatId, `Sorry, I encountered an error while trying to show ${actionValue} options. Please ask me directly about ${actionValue}.`);
       }
     } else if (actionValue.startsWith('faq_')) {
@@ -4278,5 +4302,59 @@ app.post('/test-card-click', async (req, res) => {
   } catch (error) {
     console.error('❌ Error in test endpoint:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Test card button click simulation
+app.post('/test-card-interaction', async (req, res) => {
+  try {
+    const { chatId, buttonValue = 'dashboard' } = req.body;
+    
+    if (!chatId) {
+      return res.status(400).json({ error: 'chatId is required' });
+    }
+    
+    console.log('🧪 Testing card interaction simulation');
+    console.log('🧪 Chat ID:', chatId);
+    console.log('🧪 Button Value:', buttonValue);
+    
+    // Simulate the event that Lark would send when a button is clicked
+    const mockCardEvent = {
+      open_chat_id: chatId,
+      open_id: 'test_user_' + Date.now(),
+      action: {
+        value: buttonValue,
+        tag: 'button'
+      },
+      token: 'test_token',
+      type: 'card.action'
+    };
+    
+    console.log('🧪 Simulated event:', JSON.stringify(mockCardEvent, null, 2));
+    
+    // Process the card interaction
+    const startTime = Date.now();
+    await handleCardInteraction(mockCardEvent);
+    const duration = Date.now() - startTime;
+    
+    console.log('🧪 Card interaction processing took:', duration + 'ms');
+    
+    res.json({
+      success: true,
+      message: 'Card interaction simulation completed',
+      chatId: chatId,
+      buttonValue: buttonValue,
+      processingTimeMs: duration,
+      simulatedEvent: mockCardEvent,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Card interaction simulation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
   }
 });
