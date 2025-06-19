@@ -1364,39 +1364,50 @@ async function getLarkUserInfo(userId) {
 }
 
 // Send message to Lark using SDK
-async function sendMessage(chat_id, message) {
-      try {
-      console.log('📨 Sending message to chat:', chat_id);
-    console.log('📝 Message content:', message);
-    
-    // Detect the ID type based on the chat ID format
-    let receiveIdType = 'chat_id';
-    if (chat_id.startsWith('ou_')) {
-      receiveIdType = 'open_id';
-    } else if (chat_id.startsWith('oc_')) {
-      receiveIdType = 'chat_id';
-    } else if (chat_id.startsWith('og_')) {
-      receiveIdType = 'chat_id';
+async function sendMessage(chat_id, message, maxRetries = 3) {
+  console.log('📨 Sending message to chat:', chat_id);
+  console.log('📝 Message content:', message);
+  
+  // Detect the ID type based on the chat ID format
+  let receiveIdType = 'chat_id';
+  if (chat_id.startsWith('ou_')) {
+    receiveIdType = 'open_id';
+  } else if (chat_id.startsWith('oc_')) {
+    receiveIdType = 'chat_id';
+  } else if (chat_id.startsWith('og_')) {
+    receiveIdType = 'chat_id';
+  }
+
+  console.log('🔍 Using receive_id_type:', receiveIdType);
+
+  const messageParams = {
+    params: {
+      receive_id_type: receiveIdType
+    },
+    data: {
+      receive_id: chat_id,
+      msg_type: 'text',
+      content: JSON.stringify({
+        text: message
+      }),
+      uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     }
+  };
 
-    console.log('🔍 Using receive_id_type:', receiveIdType);
-
+  // Retry logic for network issues
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log('🔄 Using Lark SDK for message sending...');
+      console.log(`🔄 Attempt ${attempt}/${maxRetries}: Using Lark SDK for message sending...`);
       
-      const messageParams = {
-        params: {
-          receive_id_type: receiveIdType
-        },
-        data: {
-          receive_id: chat_id,
-          msg_type: 'text',
-          content: JSON.stringify({
-            text: message
-          }),
-          uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        }
-      };
+      if (attempt > 1) {
+        // Add exponential backoff delay for retries
+        const delay = Math.min(1000 * Math.pow(2, attempt - 2), 5000); // 500ms, 1s, 2s, max 5s
+        console.log(`⏱️ Waiting ${delay}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        // Generate new UUID for retry to avoid duplicates
+        messageParams.data.uuid = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      }
       
       console.log('📊 SDK Message Parameters:', JSON.stringify(messageParams, null, 2));
       
@@ -1415,15 +1426,27 @@ async function sendMessage(chat_id, message) {
       
       return messageData;
       
-    } catch (sdkError) {
-      console.error('❌ SDK message sending failed:', sdkError.message);
-      throw sdkError;
+    } catch (error) {
+      const isNetworkError = error.code === 'ECONNRESET' || 
+                            error.code === 'ENOTFOUND' || 
+                            error.code === 'ETIMEDOUT' ||
+                            error.message?.includes('socket hang up') ||
+                            error.message?.includes('timeout') ||
+                            error.message?.includes('network');
+      
+      console.error(`❌ Attempt ${attempt}/${maxRetries} failed:`, error.message);
+      console.error('🔍 Error code:', error.code);
+      console.error('🌐 Is network error:', isNetworkError);
+      
+      if (attempt === maxRetries || !isNetworkError) {
+        // Last attempt or non-network error - throw the error
+        console.error('❌ All retry attempts exhausted or non-recoverable error');
+        console.error('📋 Final error details:', error.message);
+        throw error;
+      }
+      
+      console.log(`🔄 Network error detected, will retry (${maxRetries - attempt} attempts remaining)`);
     }
-    
-  } catch (error) {
-    console.error('❌ Error sending message to Lark:', error);
-    console.error('📋 Message error details:', error.message);
-    throw error;
   }
 }
 
