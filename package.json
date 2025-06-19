@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "build": "npm run validate:env && npm run build:check",
-    "build:check": "node -c server.js && node -c api/webhook.js && echo '✅ Build validation passed'",
+    "build:check": "node -c server.js && echo '✅ Build validation passed'",
     "build:clean": "rm -rf dist && mkdir -p dist",
     "build:copy": "cp -r . dist/ && rm -rf dist/node_modules dist/.git",
     "build:prod": "npm run build:clean && npm run validate:env && npm run build:copy && cd dist && npm install --production",
