@@ -876,8 +876,13 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       return await handleTicketCreationFlow(chatId, userMessage, ticketState, senderId);
     }
     
-    // Check if user is in text-based FAQ mode
+    // Check if user is in text-based interaction mode
     const userState = userInteractionState.get(chatId);
+    if (userState && userState.step === 'text_page_selection') {
+      console.log('📝 User in text page selection mode');
+      return await handleTextPageSelection(chatId, userMessage);
+    }
+    
     if (userState && userState.step === 'text_faq_mode') {
       console.log('💬 User in text FAQ mode for page:', userState.selectedPage);
       const textFAQResult = await handleTextFAQInteraction(chatId, userMessage, userState.selectedPage);
@@ -4476,8 +4481,49 @@ async function sendSimplePageSelectionCard(chatId) {
   }
 }
 
+// Send text-only page selection (no cards)
+async function sendTextOnlyPageSelection(chatId) {
+  try {
+    console.log('📝 Sending text-only page selection');
+    
+    let message = `🤖 **PM-Next Support Bot** - Quick Help\n\n`;
+    message += `Please select which page you need help with:\n\n`;
+    
+    Object.keys(MAIN_PAGES).forEach((pageKey, index) => {
+      const page = MAIN_PAGES[pageKey];
+      message += `**${index + 1}.** ${page.name}\n`;
+    });
+    
+    message += `\n💬 **Type a number (1-${Object.keys(MAIN_PAGES).length}) or ask directly!**`;
+    
+    await sendMessage(chatId, message);
+    
+    // Set user state for text-based page selection
+    userInteractionState.set(chatId, {
+      step: 'text_page_selection',
+      selectedPage: null,
+      awaiting: true
+    });
+    
+    console.log('✅ Text-only page selection sent');
+    return { success: true, cardType: 'text_only' };
+    
+  } catch (error) {
+    console.error('❌ Error sending text-only page selection:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Send interactive page selection message
 async function sendPageSelectionMessage(chatId) {
+  const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  
+  // In serverless, skip cards entirely if FORCE_TEXT_MODE is enabled
+  if (isServerless && process.env.FORCE_TEXT_MODE === 'true') {
+    console.log('⚡ FORCE_TEXT_MODE enabled - using text-only page selection');
+    return await sendTextOnlyPageSelection(chatId);
+  }
+  
   try {
     console.log('📋 Sending page selection message to chat:', chatId);
     
@@ -4579,9 +4625,52 @@ async function sendPageSelectionMessage(chatId) {
   }
 }
 
+// Send text-only FAQs (no cards) for maximum serverless reliability
+async function sendTextOnlyFAQs(chatId, pageKey) {
+  try {
+    console.log('📝 Sending text-only FAQs for:', pageKey);
+    
+    const page = MAIN_PAGES[pageKey];
+    if (!page) {
+      throw new Error(`Unknown page: ${pageKey}`);
+    }
+    
+    let message = `**${page.name} - Quick Help** 🚀\n\n`;
+    
+    page.faqs.forEach((faq, index) => {
+      message += `**${index + 1}.** ${faq}\n\n`;
+    });
+    
+    message += `💬 **Type a number (1-${page.faqs.length}) or ask your question directly!**\n\n`;
+    message += `🔙 Type "back" for main menu`;
+    
+    await sendMessage(chatId, message);
+    
+    // Set user state for text-based FAQ interaction
+    userInteractionState.set(chatId, {
+      step: 'text_faq_mode',
+      selectedPage: pageKey,
+      awaiting: true
+    });
+    
+    console.log('✅ Text-only FAQs sent successfully');
+    return { success: true, cardType: 'text_only' };
+    
+  } catch (error) {
+    console.error('❌ Error sending text-only FAQs:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Send FAQ options for selected page
 async function sendPageFAQs(chatId, pageKey) {
   const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  
+  // In serverless, skip cards entirely and go straight to text for reliability
+  if (isServerless && process.env.FORCE_TEXT_MODE === 'true') {
+    console.log('⚡ FORCE_TEXT_MODE enabled - skipping cards entirely');
+    return await sendTextOnlyFAQs(chatId, pageKey);
+  }
   
   try {
     console.log('📋 Sending FAQ options for page:', pageKey);
@@ -4704,8 +4793,8 @@ async function sendPageFAQs(chatId, pageKey) {
 
     console.log('📦 FAQ card payload size:', JSON.stringify(cardContent).length, 'bytes');
     
-    // Set a shorter timeout for FAQ cards in serverless
-    const maxWaitTime = isServerless ? 15000 : 25000; // 15s for serverless, 25s for local
+         // Set a very short timeout for FAQ cards in serverless
+     const maxWaitTime = isServerless ? 5000 : 25000; // 5s for serverless, 25s for local
     console.log('⏱️ Using timeout:', maxWaitTime + 'ms');
     
     // Create a timeout promise to race against card sending
@@ -4797,9 +4886,9 @@ async function sendInteractiveCard(chatId, cardContent) {
     console.log('🔍 Using receive_id_type:', receiveIdType);
     console.log('🔍 Chat ID format detected:', chatId.substring(0, 3) + '...');
 
-    // For Vercel serverless environment, use optimized settings
+    // For Vercel serverless environment, use ultra-optimized settings
     const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    const timeoutMs = isServerless ? 25000 : 30000; // Increased timeout for serverless
+    const timeoutMs = isServerless ? 8000 : 30000; // Ultra-short timeout for serverless - fail fast
     
     console.log('🌐 Environment: ' + (isServerless ? 'Serverless' : 'Local'));
     console.log('⏱️ Timeout setting:', timeoutMs + 'ms');
@@ -5173,6 +5262,44 @@ Let me search our comprehensive knowledge base for detailed information. Please 
     console.error('❌ Error handling card interaction:', error);
     console.error('❌ Error stack:', error.stack);
     console.error('❌ ============================================');
+  }
+}
+
+// Handle text-based page selection (when cards fail)
+async function handleTextPageSelection(chatId, userMessage) {
+  try {
+    console.log('📝 Handling text page selection:', userMessage);
+    
+    const pageKeys = Object.keys(MAIN_PAGES);
+    
+    // Check if user typed a number to select a page
+    const pageNumber = parseInt(userMessage.trim());
+    if (!isNaN(pageNumber) && pageNumber >= 1 && pageNumber <= pageKeys.length) {
+      console.log('🔢 User selected page number:', pageNumber);
+      const selectedPageKey = pageKeys[pageNumber - 1];
+      
+      // Clear page selection mode and show FAQs
+      userInteractionState.delete(chatId);
+      
+      // Send FAQs for selected page (will use text-only if FORCE_TEXT_MODE is enabled)
+      return await sendPageFAQs(chatId, selectedPageKey);
+    }
+    
+    // Handle direct questions - treat as normal AI query
+    console.log('❓ User asking direct question in page selection mode');
+    userInteractionState.delete(chatId); // Clear page selection mode
+    
+    return {
+      response: '', // Will be handled by normal AI flow
+      responseType: 'direct_question',
+      processingTimeMs: 0,
+      continueToAI: true // Signal to continue with normal AI processing
+    };
+    
+  } catch (error) {
+    console.error('❌ Error in text page selection:', error);
+    userInteractionState.delete(chatId);
+    return 'I encountered an error. Please start over by saying "hi" or "help".';
   }
 }
 
