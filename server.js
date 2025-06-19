@@ -817,7 +817,7 @@ async function handleMessage(event) {
       if (aiResponse && !responseMetadata.interactiveCard) {
         console.log('📤 Sending response to Lark...');
         // Send response back to Lark
-        await sendMessage(chat_id, aiResponse);
+        await sendMessage(chatId, aiResponse);
         console.log('🎉 Message sent successfully!');
       } else if (responseMetadata.interactiveCard) {
         console.log('🎯 Interactive card already sent, skipping text response');
@@ -825,7 +825,7 @@ async function handleMessage(event) {
       
       // Log the bot response with detailed metadata
       const botLogData = {
-        chatId: chat_id,
+        chatId: chatId,
         message: aiResponse,
         responseType: responseMetadata.responseType || 'ai_generated',
         processingTimeMs: responseMetadata.processingTimeMs || totalProcessingTime,
@@ -910,17 +910,30 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       // Clear user interaction state to reset the flow
       userInteractionState.delete(chatId);
       
+      let cardSent = false;
+      
       try {
+        let cardResult;
         if (useSimpleCard) {
           // Send simplified card for serverless environment
-          await sendSimplePageSelectionCard(chatId);
+          cardResult = await sendSimplePageSelectionCard(chatId);
           console.log('✅ Simple page selection card sent successfully');
         } else {
-          await sendPageSelectionMessage(chatId);
+          cardResult = await sendPageSelectionMessage(chatId);
           console.log('✅ Page selection card sent successfully');
         }
+        
+        // Check if card sending failed gracefully
+        if (cardResult && cardResult.success === false) {
+          console.log('⚠️ Card sending failed gracefully, using text fallback');
+          throw new Error(cardResult.error || 'Card sending failed');
+        } else {
+          cardSent = true;
+        }
       } catch (cardError) {
-        console.error('❌ Failed to send page selection card:', cardError);
+        console.error('❌ Failed to send page selection card:', cardError.message || cardError);
+        console.log('🔄 Falling back to text message...');
+        
         // Fallback to text message if card fails
         const fallbackMessage = `👋 Welcome to PM-Next Support Bot! 🤖
 
@@ -934,15 +947,22 @@ Please let me know which page you need help with:
 
 Or ask me anything about PM-Next directly!`;
         
-        await sendMessage(chatId, fallbackMessage);
+        try {
+          await sendMessage(chatId, fallbackMessage);
+          console.log('✅ Text fallback sent successfully');
+        } catch (textError) {
+          console.error('❌ Even text fallback failed:', textError.message);
+          // At this point, we'll just return an error response
+        }
       }
       
       const responseTime = Date.now() - startTime;
       return {
-        response: '', // Empty response since we sent interactive card or fallback
+        response: cardSent ? '' : 'Welcome! Please let me know which page you need help with: Dashboard, Jobs, Candidates, Clients, Calendar, or Claims.',
         responseType: 'greeting_buttons',
         processingTimeMs: responseTime,
-        interactiveCard: true
+        interactiveCard: cardSent,
+        fallbackUsed: !cardSent
       };
     }
     
@@ -2272,6 +2292,123 @@ app.post('/test-basic-message', async (req, res) => {
   }
 });
 
+// Test serverless optimized card with enhanced error handling
+app.post('/test-serverless-optimized', async (req, res) => {
+  try {
+    const { chatId } = req.body;
+    
+    if (!chatId) {
+      return res.status(400).json({ error: 'chatId is required' });
+    }
+    
+    console.log('🌐 Testing serverless-optimized card with enhanced error handling');
+    console.log('🌐 Environment check:', {
+      VERCEL: !!process.env.VERCEL,
+      NODE_ENV: process.env.NODE_ENV,
+      LARK_APP_ID: !!process.env.LARK_APP_ID,
+      LARK_APP_SECRET: !!process.env.LARK_APP_SECRET
+    });
+    
+    // Ultra-minimal card for serverless testing
+    const minimalCard = {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "🔧 Serverless Test - Enhanced",
+            "tag": "plain_text"
+          }
+        },
+        {
+          "tag": "action",
+          "actions": [
+            {
+              "tag": "button",
+              "text": {
+                "content": "✅ Working",
+                "tag": "plain_text"
+              },
+              "type": "primary",
+              "value": "test_working"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "❌ Failed",
+                "tag": "plain_text"
+              },
+              "type": "default",
+              "value": "test_failed"
+            }
+          ]
+        }
+      ]
+    };
+    
+    console.log('📦 Minimal card payload size:', JSON.stringify(minimalCard).length, 'bytes');
+    
+    const startTime = Date.now();
+    const result = await sendInteractiveCard(chatId, minimalCard);
+    const duration = Date.now() - startTime;
+    
+    console.log('⏱️ Card sending took:', duration + 'ms');
+    console.log('📊 Result:', result);
+    
+    if (result && result.success === false) {
+      // Card failed, test text fallback
+      console.log('⚠️ Card failed, testing text fallback...');
+      const textStartTime = Date.now();
+      await sendMessage(chatId, '🔧 Serverless test - Card failed, but text messaging is working! ✅');
+      const textDuration = Date.now() - textStartTime;
+      
+      res.json({
+        success: true,
+        message: 'Card failed but text fallback worked',
+        environment: process.env.VERCEL ? 'Vercel' : 'Local',
+        cardResult: result,
+        cardDuration: duration,
+        textDuration: textDuration,
+        fallbackUsed: true,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.json({
+        success: true,
+        message: 'Serverless optimized card sent successfully',
+        environment: process.env.VERCEL ? 'Vercel' : 'Local',
+        cardResult: result,
+        duration: duration,
+        fallbackUsed: false,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Serverless optimized test error:', error);
+    
+    // Try text fallback even on exception
+    try {
+      await sendMessage(req.body.chatId, '⚠️ Serverless test encountered errors, but basic messaging still works!');
+      res.json({
+        success: false,
+        error: error.message,
+        textFallbackWorked: true,
+        environment: process.env.VERCEL ? 'Vercel' : 'Local',
+        timestamp: new Date().toISOString()
+      });
+    } catch (textError) {
+      res.status(500).json({ 
+        success: false,
+        error: error.message,
+        textFallbackWorked: false,
+        textError: textError.message,
+        environment: process.env.VERCEL ? 'Vercel' : 'Local',
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+});
+
 // Get current loaded knowledge base content
 app.get('/current-knowledge-base', (req, res) => {
   try {
@@ -3515,18 +3652,31 @@ async function sendSimplePageSelectionCard(chatId) {
       ]
     };
 
-    await sendInteractiveCard(chatId, simpleCard);
+    const result = await sendInteractiveCard(chatId, simpleCard);
     
-    // Set user state
+    // Check if card sending was successful
+    if (result && result.success === false) {
+      console.log('⚠️ Simple card sending failed, returning error result');
+      return result;
+    }
+    
+    // Set user state only if card was sent successfully
     userInteractionState.set(chatId, {
       step: 'awaiting_page_selection',
       selectedPage: null,
       awaiting: true
     });
     
+    console.log('✅ Simple page selection card sent and state set');
+    return { success: true, cardType: 'simple_page_selection' };
+    
   } catch (error) {
     console.error('❌ Error sending simple page selection:', error);
-    throw error;
+    return { 
+      success: false, 
+      error: error.message || 'Failed to send simple page selection',
+      cardType: 'simple_page_selection'
+    };
   }
 }
 
@@ -3595,9 +3745,15 @@ async function sendPageSelectionMessage(chatId) {
       ]
     };
 
-    await sendInteractiveCard(chatId, cardContent);
+    const result = await sendInteractiveCard(chatId, cardContent);
     
-    // Set user state to awaiting page selection
+    // Check if card sending was successful
+    if (result && result.success === false) {
+      console.log('⚠️ Page selection card sending failed, returning error result');
+      return result;
+    }
+    
+    // Set user state to awaiting page selection only if card was sent successfully
     userInteractionState.set(chatId, {
       step: 'awaiting_page_selection',
       selectedPage: null,
@@ -3605,10 +3761,25 @@ async function sendPageSelectionMessage(chatId) {
     });
     
     console.log('✅ Page selection message sent successfully');
+    return { success: true, cardType: 'full_page_selection' };
+    
   } catch (error) {
-    console.error('❌ Error sending page selection message:', error);
+    console.error('❌ Error sending page selection message:', error.message || error);
+    console.log('🔄 Attempting text fallback for page selection...');
+    
     // Fallback to text message
-    await sendMessage(chatId, "Welcome to PM-Next Support Bot! 🤖\n\nPlease let me know which page you need help with:\n📊 Dashboard\n💼 Jobs\n👥 Candidates\n🏢 Clients\n📅 Calendar\n💰 Claims\n\nOr ask me anything about PM-Next directly!");
+    try {
+      await sendMessage(chatId, "Welcome to PM-Next Support Bot! 🤖\n\nPlease let me know which page you need help with:\n📊 Dashboard\n💼 Jobs\n👥 Candidates\n🏢 Clients\n📅 Calendar\n💰 Claims\n\nOr ask me anything about PM-Next directly!");
+      console.log('✅ Page selection text fallback sent successfully');
+      return { success: true, cardType: 'text_fallback' };
+    } catch (textError) {
+      console.error('❌ Even text fallback failed for page selection:', textError.message);
+      return { 
+        success: false, 
+        error: error.message || 'Failed to send page selection',
+        cardType: 'full_page_selection'
+      };
+    }
   }
 }
 
@@ -3685,9 +3856,15 @@ async function sendPageFAQs(chatId, pageKey) {
       ]
     };
 
-    await sendInteractiveCard(chatId, cardContent);
+    const result = await sendInteractiveCard(chatId, cardContent);
     
-    // Update user state
+    // Check if card sending was successful
+    if (result && result.success === false) {
+      console.log('⚠️ FAQ card sending failed, using text fallback');
+      throw new Error(result.error || 'FAQ card sending failed');
+    }
+    
+    // Update user state only if card was sent successfully
     userInteractionState.set(chatId, {
       step: 'awaiting_faq_selection',
       selectedPage: pageKey,
@@ -3695,16 +3872,31 @@ async function sendPageFAQs(chatId, pageKey) {
     });
     
     console.log('✅ FAQ options sent successfully');
+    return { success: true, cardType: 'faq_options' };
+    
   } catch (error) {
-    console.error('❌ Error sending FAQ options:', error);
+    console.error('❌ Error sending FAQ options:', error.message || error);
+    console.log('🔄 Using text fallback for FAQ options...');
+    
     // Fallback to text message
-    const page = MAIN_PAGES[pageKey];
-    let message = `${page.name} - Frequently Asked Questions:\n\n`;
-    page.faqs.forEach((faq, index) => {
-      message += `${index + 1}. ${faq}\n`;
-    });
-    message += '\nPlease type your question or ask me anything about this page!';
-    await sendMessage(chatId, message);
+    try {
+      const page = MAIN_PAGES[pageKey];
+      let message = `${page.name} - Frequently Asked Questions:\n\n`;
+      page.faqs.forEach((faq, index) => {
+        message += `${index + 1}. ${faq}\n`;
+      });
+      message += '\nPlease type your question or ask me anything about this page!';
+      await sendMessage(chatId, message);
+      console.log('✅ FAQ text fallback sent successfully');
+      return { success: true, cardType: 'text_fallback' };
+    } catch (textError) {
+      console.error('❌ Even FAQ text fallback failed:', textError.message);
+      return { 
+        success: false, 
+        error: error.message || 'Failed to send FAQ options',
+        cardType: 'faq_options'
+      };
+    }
   }
 }
 
@@ -3723,41 +3915,53 @@ async function sendInteractiveCard(chatId, cardContent) {
       receiveIdType = 'chat_id';
     }
 
-    console.log('📦 Interactive card payload:', JSON.stringify(cardContent, null, 2));
+    console.log('📦 Interactive card payload size:', JSON.stringify(cardContent).length, 'bytes');
     console.log('🔍 Using receive_id_type:', receiveIdType);
     console.log('🔍 Chat ID format detected:', chatId.substring(0, 3) + '...');
 
+    // For Vercel serverless environment, use optimized settings
+    const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
+    const timeoutMs = isServerless ? 25000 : 30000; // Increased timeout for serverless
+    
+    console.log('🌐 Environment: ' + (isServerless ? 'Serverless' : 'Local'));
+    console.log('⏱️ Timeout setting:', timeoutMs + 'ms');
+
     let messageData;
     
-    try {
-      // Skip SDK in serverless environment - go directly to fetch for better reliability
-      if (process.env.VERCEL) {
-        console.log('🌐 Serverless environment detected - using direct fetch approach');
-        throw new Error('Skipping SDK in serverless environment');
+    // Always use fetch in serverless environments for better reliability
+    if (isServerless) {
+      console.log('🌐 Serverless environment - using direct fetch approach');
+    } else {
+      try {
+        // Try SDK first (only in local environment)
+        console.log('🔄 Attempting to use Lark SDK...');
+        messageData = await larkClient.im.message.create({
+          receive_id_type: receiveIdType,
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(cardContent),
+          uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        });
+        console.log('✅ SDK call successful');
+      } catch (sdkError) {
+        console.error('❌ SDK failed, falling back to fetch:', sdkError.message);
       }
+    }
+    
+    // Use fetch approach if SDK failed or in serverless environment
+    if (!messageData) {
+      console.log('🌐 Using fetch for card sending');
       
-      // Try SDK first (only in local environment)
-      console.log('🔄 Attempting to use Lark SDK...');
-      messageData = await larkClient.im.message.create({
-        receive_id_type: receiveIdType,
-        receive_id: chatId,
-        msg_type: 'interactive',
-        content: JSON.stringify(cardContent),
-        uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      });
-      console.log('✅ SDK call successful');
-    } catch (sdkError) {
-      console.error('❌ SDK failed, falling back to raw fetch:', sdkError.message);
-      
-      // Fallback to raw fetch if SDK fails (optimized for serverless)
-      console.log('🌐 Using optimized fetch for serverless environment');
-      
-      // Create timeout controller for serverless environment
-      const timeoutMs = process.env.VERCEL ? 15000 : 30000; // 15s for Vercel, 30s for local
+      // Create timeout controller with longer timeout for serverless
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const timeoutId = setTimeout(() => {
+        console.log('⏰ Request timeout triggered after', timeoutMs + 'ms');
+        controller.abort();
+      }, timeoutMs);
       
       try {
+        // Step 1: Get access token with timeout
+        console.log('🔑 Getting access token...');
         const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
           method: 'POST',
           headers: {
@@ -3770,17 +3974,25 @@ async function sendInteractiveCard(chatId, cardContent) {
           signal: controller.signal
         });
         
-        clearTimeout(timeoutId);
+        if (!tokenResponse.ok) {
+          throw new Error(`Token request failed: ${tokenResponse.status} ${tokenResponse.statusText}`);
+        }
+        
         const tokenData = await tokenResponse.json();
+        console.log('🔑 Token response code:', tokenData.code);
         
         if (tokenData.code !== 0) {
-          throw new Error(`Failed to get access token: ${tokenData.msg}`);
+          throw new Error(`Failed to get access token: ${tokenData.msg} (Code: ${tokenData.code})`);
         }
 
-        // Create new timeout for message sending
+        // Step 2: Send card message with separate timeout
         const messageController = new AbortController();
-        const messageTimeoutId = setTimeout(() => messageController.abort(), timeoutMs);
+        const messageTimeoutId = setTimeout(() => {
+          console.log('⏰ Message timeout triggered after', timeoutMs + 'ms');
+          messageController.abort();
+        }, timeoutMs);
         
+        console.log('📤 Sending card message...');
         const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
           method: 'POST',
           headers: {
@@ -3797,66 +4009,104 @@ async function sendInteractiveCard(chatId, cardContent) {
         });
         
         clearTimeout(messageTimeoutId);
-        messageData = await messageResponse.json();
-        console.log('✅ Fallback fetch successful');
         
-      } catch (timeoutError) {
-        clearTimeout(timeoutId);
-        console.error('❌ Fetch timeout or network error:', timeoutError.message);
-        if (timeoutError.name === 'AbortError') {
-          throw new Error(`Request timed out after ${timeoutMs}ms in serverless environment`);
+        if (!messageResponse.ok) {
+          throw new Error(`Message request failed: ${messageResponse.status} ${messageResponse.statusText}`);
         }
-        throw timeoutError;
+        
+        messageData = await messageResponse.json();
+        console.log('✅ Fetch card sending successful');
+        
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        
+        if (fetchError.name === 'AbortError') {
+          console.error('❌ Request aborted due to timeout after', timeoutMs + 'ms');
+          throw new Error(`Card sending timed out after ${timeoutMs}ms in serverless environment. This may be due to network latency or API performance issues.`);
+        } else {
+          console.error('❌ Fetch error:', fetchError.message);
+          throw fetchError;
+        }
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
     
-    console.log('📊 Lark API response data for card:', JSON.stringify(messageData, null, 2));
+    console.log('📊 Lark API response code:', messageData?.code);
     
-    if (messageData.code !== 0) {
-      console.error('🚨 Lark API Error Details for card:', {
-        code: messageData.code,
-        msg: messageData.msg,
-        data: messageData.data,
-        error: messageData.error
-      });
+    if (!messageData || messageData.code !== 0) {
+      const errorInfo = {
+        code: messageData?.code || 'unknown',
+        msg: messageData?.msg || 'No response data',
+        data: messageData?.data,
+        error: messageData?.error
+      };
+      
+      console.error('🚨 Lark API Error Details for card:', errorInfo);
       
       // Specific error handling for common issues
-      if (messageData.code === 230002) {
+      if (messageData?.code === 230002) {
         console.error('❌ Invalid card format or unsupported message type');
-      } else if (messageData.code === 99991401) {
+      } else if (messageData?.code === 99991401) {
         console.error('❌ Invalid receive_id or chat not found');
-      } else if (messageData.code === 99991400) {
+      } else if (messageData?.code === 99991400) {
         console.error('❌ Missing required parameters');
       }
       
-      throw new Error(`Failed to send interactive card: ${messageData.msg || 'Unknown error'} (Code: ${messageData.code})`);
+      throw new Error(`Failed to send interactive card: ${errorInfo.msg} (Code: ${errorInfo.code})`);
     }
 
     console.log('✅ Interactive card sent successfully');
     console.log('📬 Message ID:', messageData.data?.message_id);
     console.log('📅 Timestamp:', messageData.data?.create_time);
-    console.log('🌐 Environment:', process.env.VERCEL ? 'Vercel Serverless' : 'Local Development');
+    console.log('🌐 Environment:', isServerless ? 'Serverless' : 'Local Development');
     console.log('🔧 Node version:', process.version);
     
     // Extra validation for serverless environment
-    if (process.env.VERCEL) {
+    if (isServerless) {
       console.log('🔍 Serverless card validation:');
       console.log('  - Card payload size:', JSON.stringify(cardContent).length, 'bytes');
       console.log('  - Response status code:', messageData.code);
       console.log('  - Has message data:', !!messageData.data);
       console.log('  - Message type sent: interactive');
+      console.log('  - Environment variables check:');
+      console.log('    - LARK_APP_ID:', !!process.env.LARK_APP_ID);
+      console.log('    - LARK_APP_SECRET:', !!process.env.LARK_APP_SECRET);
     }
+    
+    return messageData;
+    
   } catch (error) {
     console.error('❌ Error sending interactive card to Lark:', error);
     console.error('📋 Card error details:', error.message);
+    console.error('📋 Error stack (first 500 chars):', error.stack?.substring(0, 500));
     
-    // Add additional debugging for serverless issues
-    if (error.message.includes('fetch failed') || error.message.includes('SocketError') || error.message.includes('EADDRNOTAVAIL')) {
-      console.error('🌐 Network connectivity issue detected');
-      console.error('💡 This may be a DNS resolution or connectivity issue');
+    // Enhanced error analysis for serverless issues
+    if (error.message.includes('timeout') || error.message.includes('timed out')) {
+      console.error('🕐 TIMEOUT ISSUE DETECTED:');
+      console.error('  - This is likely due to network latency in serverless environment');
+      console.error('  - Consider simplifying the card or using text fallback');
+      console.error('  - Current timeout setting:', isServerless ? '25000ms' : '30000ms');
     }
     
-    throw error;
+    if (error.message.includes('fetch failed') || error.message.includes('SocketError') || error.message.includes('EADDRNOTAVAIL')) {
+      console.error('🌐 NETWORK CONNECTIVITY ISSUE DETECTED:');
+      console.error('  - This may be a DNS resolution or connectivity issue');
+      console.error('  - Check Vercel function region and Lark API availability');
+    }
+    
+    if (error.message.includes('token')) {
+      console.error('🔑 TOKEN ISSUE DETECTED:');
+      console.error('  - Check LARK_APP_ID and LARK_APP_SECRET environment variables');
+      console.error('  - Verify Lark app configuration');
+    }
+    
+    // Don't throw the error - instead return failure info for graceful handling
+    return {
+      success: false,
+      error: error.message,
+      code: 'card_send_failed'
+    };
   }
 }
 
@@ -3906,7 +4156,16 @@ async function handleCardInteraction(event) {
     if (Object.keys(MAIN_PAGES).includes(actionValue)) {
       // Page selection
       console.log('📄 Page selected:', actionValue);
-      await sendPageFAQs(chatId, actionValue);
+      try {
+        const result = await sendPageFAQs(chatId, actionValue);
+        if (result && result.success === false) {
+          console.log('⚠️ FAQ page sending failed, sending error message');
+          await sendMessage(chatId, `Sorry, I had trouble showing the FAQ options for ${actionValue}. Please ask me directly about ${actionValue} or try again later.`);
+        }
+      } catch (error) {
+        console.error('❌ Error in page FAQ handling:', error.message);
+        await sendMessage(chatId, `Sorry, I encountered an error while trying to show ${actionValue} options. Please ask me directly about ${actionValue}.`);
+      }
     } else if (actionValue.startsWith('faq_')) {
       // FAQ selection
       console.log('🔍 ========== FAQ BUTTON DEBUG ==========');
@@ -3965,7 +4224,16 @@ async function handleCardInteraction(event) {
     } else if (actionValue === 'back_to_pages') {
       // Back to page selection
       console.log('🔙 Back to page selection');
-      await sendPageSelectionMessage(chatId);
+      try {
+        const result = await sendPageSelectionMessage(chatId);
+        if (result && result.success === false) {
+          console.log('⚠️ Back to pages failed, sending simple text message');
+          await sendMessage(chatId, "Please let me know which page you need help with: Dashboard, Jobs, Candidates, Clients, Calendar, or Claims.");
+        }
+      } catch (error) {
+        console.error('❌ Error going back to pages:', error.message);
+        await sendMessage(chatId, "Please let me know which page you need help with: Dashboard, Jobs, Candidates, Clients, Calendar, or Claims.");
+      }
     } else if (actionValue === 'custom_question') {
       // Enable custom question mode
       console.log('💬 Custom question mode enabled');
