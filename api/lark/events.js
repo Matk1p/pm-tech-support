@@ -9,16 +9,23 @@ console.log('🔧 ========== LARK SDK INITIALIZATION ==========');
 console.log('🔧 Lark App ID available:', !!process.env.LARK_APP_ID);
 console.log('🔧 Lark App Secret available:', !!process.env.LARK_APP_SECRET);
 console.log('🔧 App ID preview:', process.env.LARK_APP_ID?.substring(0, 8) + '...');
+console.log('🔧 Environment:', process.env.NODE_ENV);
+console.log('🔧 Platform:', process.platform);
 
-const larkClient = new Client({
-  appId: process.env.LARK_APP_ID,
-  appSecret: process.env.LARK_APP_SECRET,
-  appType: 'self_built',
-  domain: 'larksuite'
-});
-
-console.log('🔧 Lark client initialized:', !!larkClient);
-console.log('🔧 Lark client methods available:', !!larkClient.im?.message?.create);
+let larkClient;
+try {
+  larkClient = new Client({
+    appId: process.env.LARK_APP_ID,
+    appSecret: process.env.LARK_APP_SECRET,
+    appType: 'self_built',
+    domain: 'larksuite'
+  });
+  console.log('🔧 Lark client initialized successfully:', !!larkClient);
+  console.log('🔧 Lark client methods available:', !!larkClient.im?.message?.create);
+} catch (error) {
+  console.error('🔧 Failed to initialize Lark client:', error);
+  larkClient = null;
+}
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -474,40 +481,96 @@ async function sendPageFAQs(chatId, pageKey) {
   }
 }
 
-// Send interactive card using Lark SDK
+// Send interactive card with hybrid approach (SDK + fallback)
 async function sendInteractiveCard(chatId, cardContent) {
+  console.log('🎴 ========== SENDING INTERACTIVE CARD (HYBRID) ==========');
+  console.log('🎴 Chat ID:', chatId);
+  console.log('🎴 SDK client available:', !!larkClient);
+  
+  // Try SDK first if available
+  if (larkClient) {
+    try {
+      console.log('🎴 Attempting to send card via SDK...');
+      
+      const response = await larkClient.im.message.create({
+        params: {
+          receive_id_type: 'chat_id',
+        },
+        data: {
+          receive_id: chatId,
+          content: JSON.stringify(cardContent),
+          msg_type: 'interactive',
+        },
+      });
+
+      console.log('🎴 SDK response code:', response.code);
+
+      if (response.code === 0) {
+        console.log('✅ Interactive card sent successfully via SDK');
+        return;
+      } else {
+        throw new Error(`SDK returned error code ${response.code}: ${response.msg}`);
+      }
+
+    } catch (sdkError) {
+      console.error('❌ SDK failed for card, falling back to fetch:', sdkError.message);
+    }
+  }
+
+  // Fallback to pure fetch
   try {
-    console.log('🎴 ========== SENDING INTERACTIVE CARD (SDK) ==========');
-    console.log('🎴 Chat ID:', chatId);
-    console.log('🎴 Card content:', JSON.stringify(cardContent, null, 2));
-    console.log('🎴 SDK client initialized:', !!larkClient);
+    console.log('🎴 Using fetch fallback for card...');
     
-    const response = await larkClient.im.message.create({
-      params: {
-        receive_id_type: 'chat_id',
+    // Get access token
+    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
-      data: {
+      body: JSON.stringify({
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET,
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!tokenResponse.ok) {
+      throw new Error(`Token request failed: ${tokenResponse.status} ${tokenResponse.statusText}`);
+    }
+
+    const tokenData = await tokenResponse.json();
+
+    if (tokenData.code !== 0) {
+      throw new Error(`Failed to get access token: ${tokenData.msg}`);
+    }
+
+    // Send interactive card
+    const messageResponse = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${tokenData.tenant_access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         receive_id: chatId,
         content: JSON.stringify(cardContent),
         msg_type: 'interactive',
-      },
+      }),
+      signal: AbortSignal.timeout(10000)
     });
 
-    console.log('🎴 SDK response:', response);
-    console.log('🎴 SDK response code:', response.code);
-    console.log('🎴 SDK response data:', response.data);
+    const messageData = await messageResponse.json();
 
-    if (response.code !== 0) {
-      throw new Error(`Failed to send interactive card: ${response.msg}`);
+    if (messageData.code !== 0) {
+      throw new Error(`Failed to send card via fetch: ${messageData.msg}`);
     }
 
-    console.log('✅ Interactive card sent successfully via SDK');
+    console.log('✅ Interactive card sent successfully via fetch fallback');
 
   } catch (error) {
-    console.error('❌ ========== INTERACTIVE CARD SDK ERROR ==========');
+    console.error('❌ ========== ALL CARD METHODS FAILED ==========');
     console.error('❌ Error type:', error.constructor.name);
     console.error('❌ Error message:', error.message);
-    console.error('❌ Error stack:', error.stack);
     throw error;
   }
 }
@@ -563,45 +626,104 @@ async function generateAIResponse(userMessage) {
   }
 }
 
-// Send regular message using Lark SDK
+// Send regular message with hybrid approach (SDK + fallback)
 async function sendMessage(chatId, message) {
+  console.log('📤 ========== SENDING MESSAGE (HYBRID) ==========');
+  console.log('📤 Chat ID:', chatId);
+  console.log('📤 Message length:', message?.length);
+  console.log('📤 Message preview:', message?.substring(0, 100) + '...');
+  console.log('📤 SDK client available:', !!larkClient);
+
+  // Try SDK first if available
+  if (larkClient) {
+    try {
+      console.log('📤 Attempting to send via SDK...');
+      
+      const response = await larkClient.im.message.create({
+        params: {
+          receive_id_type: 'chat_id',
+        },
+        data: {
+          receive_id: chatId,
+          content: JSON.stringify({ text: message }),
+          msg_type: 'text',
+        },
+      });
+
+      console.log('📤 SDK response code:', response.code);
+      console.log('📤 SDK response:', response);
+
+      if (response.code === 0) {
+        console.log('✅ Message sent successfully via SDK');
+        return;
+      } else {
+        throw new Error(`SDK returned error code ${response.code}: ${response.msg}`);
+      }
+
+    } catch (sdkError) {
+      console.error('❌ SDK failed, falling back to fetch:', sdkError.message);
+    }
+  }
+
+  // Fallback to pure fetch
   try {
-    console.log('📤 ========== SENDING MESSAGE (SDK) ==========');
-    console.log('📤 Chat ID:', chatId);
-    console.log('📤 Message length:', message?.length);
-    console.log('📤 Message preview:', message?.substring(0, 100) + '...');
-    console.log('📤 SDK client initialized:', !!larkClient);
-    console.log('📤 Environment check:');
-    console.log('📤 - Lark App ID available:', !!process.env.LARK_APP_ID);
-    console.log('📤 - Lark App Secret available:', !!process.env.LARK_APP_SECRET);
+    console.log('📤 Using fetch fallback...');
     
-    const response = await larkClient.im.message.create({
-      params: {
-        receive_id_type: 'chat_id',
+    // Get access token
+    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
-      data: {
+      body: JSON.stringify({
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET,
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!tokenResponse.ok) {
+      throw new Error(`Token request failed: ${tokenResponse.status} ${tokenResponse.statusText}`);
+    }
+
+    const tokenData = await tokenResponse.json();
+    console.log('📤 Token response code:', tokenData.code);
+
+    if (tokenData.code !== 0) {
+      throw new Error(`Failed to get access token: ${tokenData.msg}`);
+    }
+
+    // Send message
+    const messageResponse = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${tokenData.tenant_access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         receive_id: chatId,
         content: JSON.stringify({ text: message }),
         msg_type: 'text',
-      },
+      }),
+      signal: AbortSignal.timeout(10000)
     });
 
-    console.log('📤 SDK response:', response);
-    console.log('📤 SDK response code:', response.code);
-    console.log('📤 SDK response data:', response.data);
+    const messageData = await messageResponse.json();
+    console.log('📤 Fetch response code:', messageData.code);
 
-    if (response.code !== 0) {
-      throw new Error(`Failed to send message: ${response.msg}`);
+    if (messageData.code !== 0) {
+      throw new Error(`Failed to send message via fetch: ${messageData.msg}`);
     }
 
-    console.log('✅ Message sent successfully via SDK');
+    console.log('✅ Message sent successfully via fetch fallback');
 
   } catch (error) {
-    console.error('❌ ========== MESSAGE SENDING SDK ERROR ==========');
+    console.error('❌ ========== ALL MESSAGE METHODS FAILED ==========');
     console.error('❌ Error type:', error.constructor.name);
     console.error('❌ Error message:', error.message);
-    console.error('❌ Error stack:', error.stack);
-    console.error('❌ Error details:', error);
+    console.error('❌ Environment check:');
+    console.error('❌ - Lark App ID available:', !!process.env.LARK_APP_ID);
+    console.error('❌ - Lark App Secret available:', !!process.env.LARK_APP_SECRET);
     throw error;
   }
 } 
