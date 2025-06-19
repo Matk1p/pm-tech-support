@@ -555,11 +555,19 @@ app.post('/lark/events', async (req, res) => {
         console.error('Error processing card interaction:', error)
       );
       
-      // Return success immediately for card interactions
+      // Return success immediately for card interactions (optimized for serverless)
       console.log('✅ Sending immediate webhook response');
+      
+      // Set response headers for better serverless performance
+      res.set({
+        'Cache-Control': 'no-cache',
+        'Connection': 'close'
+      });
+      
       return res.status(200).json({ 
         success: true, 
         message: 'Card interaction received',
+        environment: process.env.VERCEL ? 'serverless' : 'local',
         timestamp: new Date().toISOString()
       });
     }
@@ -892,6 +900,9 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
     
     const isGreeting = greetingPatterns.some(pattern => pattern.test(userMessage.trim()));
     
+    // In serverless environment, use simpler card for better reliability
+    const useSimpleCard = process.env.VERCEL && isGreeting;
+    
     // Show page buttons for greetings (new conversations) or restart commands (existing conversations)
     if (isGreeting && (context.length === 0 || /^(restart|reset|main menu|page.*selection|show.*pages)$/i.test(userMessage.trim()))) {
       console.log('👋 Greeting/restart detected, sending page selection buttons');
@@ -899,11 +910,36 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       // Clear user interaction state to reset the flow
       userInteractionState.delete(chatId);
       
-      await sendPageSelectionMessage(chatId);
+      try {
+        if (useSimpleCard) {
+          // Send simplified card for serverless environment
+          await sendSimplePageSelectionCard(chatId);
+          console.log('✅ Simple page selection card sent successfully');
+        } else {
+          await sendPageSelectionMessage(chatId);
+          console.log('✅ Page selection card sent successfully');
+        }
+      } catch (cardError) {
+        console.error('❌ Failed to send page selection card:', cardError);
+        // Fallback to text message if card fails
+        const fallbackMessage = `👋 Welcome to PM-Next Support Bot! 🤖
+
+Please let me know which page you need help with:
+📊 Dashboard
+💼 Jobs  
+👥 Candidates
+🏢 Clients
+📅 Calendar
+💰 Claims
+
+Or ask me anything about PM-Next directly!`;
+        
+        await sendMessage(chatId, fallbackMessage);
+      }
       
       const responseTime = Date.now() - startTime;
       return {
-        response: '', // Empty response since we sent interactive card
+        response: '', // Empty response since we sent interactive card or fallback
         responseType: 'greeting_buttons',
         processingTimeMs: responseTime,
         interactiveCard: true
@@ -1375,6 +1411,40 @@ app.get('/env-check', (req, res) => {
     supabaseUrl: !!process.env.SUPABASE_URL,
     supabaseKey: !!process.env.SUPABASE_ANON_KEY,
     supabaseUrlPrefix: process.env.SUPABASE_URL ? process.env.SUPABASE_URL.substring(0, 30) + '...' : 'NOT SET'
+  });
+});
+
+// Enhanced environment check for debugging
+app.get('/debug-env', (req, res) => {
+  const envVars = {
+    // Lark configuration
+    larkAppId: !!process.env.LARK_APP_ID,
+    larkAppSecret: !!process.env.LARK_APP_SECRET,
+    larkSupportGroupId: !!process.env.LARK_SUPPORT_GROUP_ID,
+    
+    // OpenAI configuration  
+    openaiApiKey: !!process.env.OPENAI_API_KEY,
+    openaiModel: process.env.OPENAI_MODEL || 'not set',
+    
+    // Supabase configuration
+    supabaseUrl: !!process.env.SUPABASE_URL,
+    supabaseAnonKey: !!process.env.SUPABASE_ANON_KEY,
+    
+    // Environment info
+    nodeEnv: process.env.NODE_ENV || 'not set',
+    vercel: !!process.env.VERCEL,
+    platform: process.platform,
+    nodeVersion: process.version,
+    
+    // Partial values for debugging (first 10 chars)
+    larkAppIdPrefix: process.env.LARK_APP_ID ? process.env.LARK_APP_ID.substring(0, 10) + '...' : 'NOT SET',
+    supabaseUrlPrefix: process.env.SUPABASE_URL ? process.env.SUPABASE_URL.substring(0, 30) + '...' : 'NOT SET'
+  };
+  
+  res.json({
+    timestamp: new Date().toISOString(),
+    environment: envVars,
+    deployment: process.env.VERCEL ? 'Vercel Serverless' : 'Local Development'
   });
 });
 
@@ -2099,6 +2169,104 @@ app.post('/test-simple-card', async (req, res) => {
     console.error('❌ Test simple card error:', error);
     res.status(500).json({ 
       error: 'Failed to send simple card',
+      details: error.message 
+    });
+  }
+});
+
+// Test serverless-specific card sending  
+app.post('/test-serverless-card', async (req, res) => {
+  try {
+    const { chatId } = req.body;
+    
+    if (!chatId) {
+      return res.status(400).json({ error: 'chatId is required' });
+    }
+    
+    console.log('🌐 Testing serverless-optimized card for chat:', chatId);
+    console.log('🌐 Environment: Vercel =', !!process.env.VERCEL);
+    
+    // Very minimal card optimized for serverless
+    const serverlessCard = {
+      "config": {
+        "wide_screen_mode": false
+      },
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "🌐 Serverless Test Card",
+            "tag": "plain_text"
+          }
+        },
+        {
+          "tag": "action", 
+          "actions": [
+            {
+              "tag": "button",
+              "text": {
+                "content": "Test Action",
+                "tag": "plain_text"
+              },
+              "type": "primary",
+              "value": "serverless_test"
+            }
+          ]
+        }
+      ]
+    };
+    
+    console.log('📦 Serverless card size:', JSON.stringify(serverlessCard).length, 'bytes');
+    
+    const startTime = Date.now();
+    await sendInteractiveCard(chatId, serverlessCard);
+    const sendTime = Date.now() - startTime;
+    
+    res.json({
+      success: true,
+      message: 'Serverless card test completed',
+      environment: process.env.VERCEL ? 'Vercel' : 'Local',
+      sendTimeMs: sendTime,
+      cardSize: JSON.stringify(serverlessCard).length,
+      nodeVersion: process.version,
+      chatId: chatId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Serverless card test error:', error);
+    res.status(500).json({ 
+      error: 'Failed to send serverless test card',
+      details: error.message,
+      environment: process.env.VERCEL ? 'Vercel' : 'Local'
+    });
+  }
+});
+
+// Test basic message sending
+app.post('/test-basic-message', async (req, res) => {
+  try {
+    const { chatId, message } = req.body;
+    
+    if (!chatId) {
+      return res.status(400).json({ error: 'chatId is required' });
+    }
+    
+    const testMessage = message || 'Test message from server.js - basic message functionality working! 🎉';
+    
+    console.log('🧪 Testing basic message for chat:', chatId);
+    await sendMessage(chatId, testMessage);
+    
+    res.json({
+      success: true,
+      message: 'Basic message sent successfully',
+      chatId: chatId,
+      sentMessage: testMessage,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Test basic message error:', error);
+    res.status(500).json({ 
+      error: 'Failed to send basic message',
       details: error.message 
     });
   }
@@ -3283,6 +3451,85 @@ const MAIN_PAGES = {
 // Store user interaction state
 const userInteractionState = new Map(); // chatId -> { step, selectedPage, awaiting }
 
+// Send simplified page selection for serverless environments
+async function sendSimplePageSelectionCard(chatId) {
+  try {
+    console.log('🌐 Sending simplified page selection for serverless environment');
+    
+    // Very minimal card optimized for serverless
+    const simpleCard = {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "🤖 PM-Next Support - Select Page:",
+            "tag": "plain_text"
+          }
+        },
+        {
+          "tag": "action",
+          "actions": [
+            {
+              "tag": "button",
+              "text": {
+                "content": "📊 Dashboard",
+                "tag": "plain_text"
+              },
+              "type": "primary",
+              "value": "dashboard"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "💼 Jobs",
+                "tag": "plain_text"
+              },
+              "type": "primary", 
+              "value": "jobs"
+            }
+          ]
+        },
+        {
+          "tag": "action",
+          "actions": [
+            {
+              "tag": "button",
+              "text": {
+                "content": "👥 Candidates",
+                "tag": "plain_text"
+              },
+              "type": "primary",
+              "value": "candidates"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "🏢 Clients",
+                "tag": "plain_text"
+              },
+              "type": "primary",
+              "value": "clients"
+            }
+          ]
+        }
+      ]
+    };
+
+    await sendInteractiveCard(chatId, simpleCard);
+    
+    // Set user state
+    userInteractionState.set(chatId, {
+      step: 'awaiting_page_selection',
+      selectedPage: null,
+      awaiting: true
+    });
+    
+  } catch (error) {
+    console.error('❌ Error sending simple page selection:', error);
+    throw error;
+  }
+}
+
 // Send interactive page selection message
 async function sendPageSelectionMessage(chatId) {
   try {
@@ -3469,7 +3716,7 @@ async function sendInteractiveCard(chatId, cardContent) {
     // Detect the ID type based on the chat ID format
     let receiveIdType = 'chat_id';
     if (chatId.startsWith('ou_')) {
-      receiveIdType = 'user_id';
+      receiveIdType = 'open_id';
     } else if (chatId.startsWith('oc_')) {
       receiveIdType = 'chat_id';
     } else if (chatId.startsWith('og_')) {
@@ -3478,11 +3725,18 @@ async function sendInteractiveCard(chatId, cardContent) {
 
     console.log('📦 Interactive card payload:', JSON.stringify(cardContent, null, 2));
     console.log('🔍 Using receive_id_type:', receiveIdType);
+    console.log('🔍 Chat ID format detected:', chatId.substring(0, 3) + '...');
 
     let messageData;
     
     try {
-      // Try SDK first
+      // Skip SDK in serverless environment - go directly to fetch for better reliability
+      if (process.env.VERCEL) {
+        console.log('🌐 Serverless environment detected - using direct fetch approach');
+        throw new Error('Skipping SDK in serverless environment');
+      }
+      
+      // Try SDK first (only in local environment)
       console.log('🔄 Attempting to use Lark SDK...');
       messageData = await larkClient.im.message.create({
         receive_id_type: receiveIdType,
@@ -3495,40 +3749,65 @@ async function sendInteractiveCard(chatId, cardContent) {
     } catch (sdkError) {
       console.error('❌ SDK failed, falling back to raw fetch:', sdkError.message);
       
-      // Fallback to raw fetch if SDK fails
-      const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          app_id: process.env.LARK_APP_ID,
-          app_secret: process.env.LARK_APP_SECRET
-        })
-      });
-
-      const tokenData = await tokenResponse.json();
+      // Fallback to raw fetch if SDK fails (optimized for serverless)
+      console.log('🌐 Using optimized fetch for serverless environment');
       
-      if (tokenData.code !== 0) {
-        throw new Error(`Failed to get access token: ${tokenData.msg}`);
+      // Create timeout controller for serverless environment
+      const timeoutMs = process.env.VERCEL ? 15000 : 30000; // 15s for Vercel, 30s for local
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      
+      try {
+        const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            app_id: process.env.LARK_APP_ID,
+            app_secret: process.env.LARK_APP_SECRET
+          }),
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        const tokenData = await tokenResponse.json();
+        
+        if (tokenData.code !== 0) {
+          throw new Error(`Failed to get access token: ${tokenData.msg}`);
+        }
+
+        // Create new timeout for message sending
+        const messageController = new AbortController();
+        const messageTimeoutId = setTimeout(() => messageController.abort(), timeoutMs);
+        
+        const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tokenData.tenant_access_token}`
+          },
+          body: JSON.stringify({
+            receive_id: chatId,
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+            uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          }),
+          signal: messageController.signal
+        });
+        
+        clearTimeout(messageTimeoutId);
+        messageData = await messageResponse.json();
+        console.log('✅ Fallback fetch successful');
+        
+      } catch (timeoutError) {
+        clearTimeout(timeoutId);
+        console.error('❌ Fetch timeout or network error:', timeoutError.message);
+        if (timeoutError.name === 'AbortError') {
+          throw new Error(`Request timed out after ${timeoutMs}ms in serverless environment`);
+        }
+        throw timeoutError;
       }
-
-      const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tokenData.tenant_access_token}`
-        },
-        body: JSON.stringify({
-          receive_id: chatId,
-          msg_type: 'interactive',
-          content: JSON.stringify(cardContent),
-          uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        })
-      });
-
-      messageData = await messageResponse.json();
-      console.log('✅ Fallback fetch successful');
     }
     
     console.log('📊 Lark API response data for card:', JSON.stringify(messageData, null, 2));
@@ -3540,10 +3819,33 @@ async function sendInteractiveCard(chatId, cardContent) {
         data: messageData.data,
         error: messageData.error
       });
-      throw new Error(`Failed to send interactive card: ${messageData.msg || 'Unknown error'}`);
+      
+      // Specific error handling for common issues
+      if (messageData.code === 230002) {
+        console.error('❌ Invalid card format or unsupported message type');
+      } else if (messageData.code === 99991401) {
+        console.error('❌ Invalid receive_id or chat not found');
+      } else if (messageData.code === 99991400) {
+        console.error('❌ Missing required parameters');
+      }
+      
+      throw new Error(`Failed to send interactive card: ${messageData.msg || 'Unknown error'} (Code: ${messageData.code})`);
     }
 
     console.log('✅ Interactive card sent successfully');
+    console.log('📬 Message ID:', messageData.data?.message_id);
+    console.log('📅 Timestamp:', messageData.data?.create_time);
+    console.log('🌐 Environment:', process.env.VERCEL ? 'Vercel Serverless' : 'Local Development');
+    console.log('🔧 Node version:', process.version);
+    
+    // Extra validation for serverless environment
+    if (process.env.VERCEL) {
+      console.log('🔍 Serverless card validation:');
+      console.log('  - Card payload size:', JSON.stringify(cardContent).length, 'bytes');
+      console.log('  - Response status code:', messageData.code);
+      console.log('  - Has message data:', !!messageData.data);
+      console.log('  - Message type sent: interactive');
+    }
   } catch (error) {
     console.error('❌ Error sending interactive card to Lark:', error);
     console.error('📋 Card error details:', error.message);
