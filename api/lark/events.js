@@ -244,15 +244,41 @@ async function handleCardInteraction(event) {
       await sendPageFAQs(chatId, actionValue);
     } else if (actionValue.startsWith('faq_')) {
       // FAQ selection
+      console.log('🔍 ========== FAQ BUTTON CLICKED ==========');
       const parts = actionValue.split('_');
+      console.log('🔍 Action value parts:', parts);
       const [, pageKey, faqIndex] = parts;
+      console.log('🔍 Page key:', pageKey);
+      console.log('🔍 FAQ index:', faqIndex);
       
       if (MAIN_PAGES[pageKey] && MAIN_PAGES[pageKey].faqs[faqIndex]) {
         const faqQuestion = MAIN_PAGES[pageKey].faqs[faqIndex];
         console.log('❓ FAQ selected:', faqQuestion);
+        console.log('❓ Starting AI response generation...');
         
-        const aiResponse = await generateAIResponse(faqQuestion);
-        await sendMessage(chatId, aiResponse);
+        try {
+          const aiResponse = await generateAIResponse(faqQuestion);
+          console.log('✅ AI response generated:', aiResponse?.substring(0, 100) + '...');
+          console.log('📤 Sending message to chat...');
+          await sendMessage(chatId, aiResponse);
+          console.log('✅ Message sent successfully');
+        } catch (error) {
+          console.error('❌ Error in FAQ processing:', error);
+          console.error('❌ Error stack:', error.stack);
+          
+          // Fallback: Send a simple confirmation message
+          try {
+            console.log('🔄 Attempting fallback message...');
+            await sendMessage(chatId, `I received your question: "${faqQuestion}". Let me process this for you...`);
+            console.log('✅ Fallback message sent');
+          } catch (fallbackError) {
+            console.error('❌ Fallback message also failed:', fallbackError);
+          }
+        }
+      } else {
+        console.log('⚠️ Invalid FAQ selection - page:', pageKey, 'index:', faqIndex);
+        console.log('⚠️ Available pages:', Object.keys(MAIN_PAGES));
+        console.log('⚠️ Available FAQs for page:', MAIN_PAGES[pageKey]?.faqs);
       }
     } else if (actionValue === 'back_to_pages') {
       // Back to page selection
@@ -503,7 +529,14 @@ async function sendInteractiveCard(chatId, cardContent) {
 // Generate AI response
 async function generateAIResponse(userMessage) {
   try {
-    console.log('🤖 Generating AI response for:', userMessage);
+    console.log('🤖 ========== AI RESPONSE GENERATION ==========');
+    console.log('🤖 Input message:', userMessage);
+    console.log('🤖 OpenAI API Key available:', !!process.env.OPENAI_API_KEY);
+    console.log('🤖 Starting OpenAI request...');
+    
+    // Add timeout for OpenAI request
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
     
     const completion = await openai.chat.completions.create({
       model: "gpt-4",
@@ -519,11 +552,27 @@ async function generateAIResponse(userMessage) {
       ],
       max_tokens: 1000,
       temperature: 0.7,
+    }, {
+      signal: controller.signal
     });
 
-    return completion.choices[0].message.content;
+    clearTimeout(timeoutId);
+    
+    const response = completion.choices[0].message.content;
+    console.log('✅ AI response generated successfully');
+    console.log('✅ Response length:', response?.length);
+    return response;
+    
   } catch (error) {
     console.error('❌ Error generating AI response:', error);
+    console.error('❌ Error type:', error.constructor.name);
+    console.error('❌ Error message:', error.message);
+    
+    if (error.name === 'AbortError') {
+      console.error('❌ OpenAI request timed out');
+      return "I'm sorry, my response took too long to generate. Please try asking a shorter question or contact support.";
+    }
+    
     return "I'm sorry, I'm having trouble processing your question right now. Please try again or contact support.";
   }
 }
@@ -531,10 +580,16 @@ async function generateAIResponse(userMessage) {
 // Send regular message using pure fetch (no SDK)
 async function sendMessage(chatId, message) {
   try {
-    console.log('📤 Sending message to chat:', chatId);
-    console.log('📤 Message content:', message);
+    console.log('📤 ========== SENDING MESSAGE ==========');
+    console.log('📤 Chat ID:', chatId);
+    console.log('📤 Message length:', message?.length);
+    console.log('📤 Message preview:', message?.substring(0, 100) + '...');
+    console.log('📤 Environment check:');
+    console.log('📤 - Lark App ID available:', !!process.env.LARK_APP_ID);
+    console.log('📤 - Lark App Secret available:', !!process.env.LARK_APP_SECRET);
     
-    // Get access token
+    // Get access token with timeout
+    console.log('📤 Step 1: Getting access token...');
     const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
       method: 'POST',
       headers: {
@@ -544,21 +599,28 @@ async function sendMessage(chatId, message) {
         app_id: process.env.LARK_APP_ID,
         app_secret: process.env.LARK_APP_SECRET,
       }),
+      signal: AbortSignal.timeout(10000) // 10 second timeout
     });
+
+    console.log('📤 Token response status:', tokenResponse.status);
+    console.log('📤 Token response ok:', tokenResponse.ok);
 
     if (!tokenResponse.ok) {
       throw new Error(`Token request failed: ${tokenResponse.status} ${tokenResponse.statusText}`);
     }
 
     const tokenData = await tokenResponse.json();
+    console.log('📤 Token data code:', tokenData.code);
 
     if (tokenData.code !== 0) {
       throw new Error(`Failed to get access token: ${tokenData.msg}`);
     }
 
     const accessToken = tokenData.tenant_access_token;
+    console.log('📤 Access token received:', !!accessToken);
 
-    // Send message
+    // Send message with timeout
+    console.log('📤 Step 2: Sending message...');
     const messageResponse = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
       method: 'POST',
       headers: {
@@ -570,9 +632,15 @@ async function sendMessage(chatId, message) {
         content: JSON.stringify({ text: message }),
         msg_type: 'text',
       }),
+      signal: AbortSignal.timeout(10000) // 10 second timeout
     });
 
+    console.log('📤 Message response status:', messageResponse.status);
+    console.log('📤 Message response ok:', messageResponse.ok);
+
     const messageData = await messageResponse.json();
+    console.log('📤 Message data code:', messageData.code);
+    console.log('📤 Message data:', messageData);
 
     if (messageData.code !== 0) {
       throw new Error(`Failed to send message: ${messageData.msg}`);
@@ -581,7 +649,15 @@ async function sendMessage(chatId, message) {
     console.log('✅ Message sent successfully');
 
   } catch (error) {
-    console.error('❌ Error sending message:', error);
+    console.error('❌ ========== MESSAGE SENDING ERROR ==========');
+    console.error('❌ Error type:', error.constructor.name);
+    console.error('❌ Error message:', error.message);
+    console.error('❌ Error stack:', error.stack);
+    
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+      console.error('❌ Network timeout occurred');
+    }
+    
     throw error;
   }
 } 
