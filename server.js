@@ -1383,10 +1383,6 @@ async function sendMessage(chatId, message) {
     if (isServerless) {
       console.log('⚡ Using direct API call for serverless speed...');
       
-      // Add timeout for serverless environments
-      const tokenController = new AbortController();
-      const tokenTimeout = setTimeout(() => tokenController.abort(), 5000); // 5s timeout
-      
       const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
         method: 'POST',
         headers: {
@@ -1395,20 +1391,14 @@ async function sendMessage(chatId, message) {
         body: JSON.stringify({
           app_id: process.env.LARK_APP_ID,
           app_secret: process.env.LARK_APP_SECRET
-        }),
-        signal: tokenController.signal
+        })
       });
-      
-      clearTimeout(tokenTimeout);
 
       const tokenData = await tokenResponse.json();
       
       if (tokenData.code !== 0) {
         throw new Error(`Failed to get access token: ${tokenData.msg}`);
       }
-
-      const messageController = new AbortController();
-      const messageTimeout = setTimeout(() => messageController.abort(), 5000); // 5s timeout
 
       const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
         method: 'POST',
@@ -1423,11 +1413,8 @@ async function sendMessage(chatId, message) {
             text: message
           }),
           uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        }),
-        signal: messageController.signal
+        })
       });
-      
-      clearTimeout(messageTimeout);
 
       messageData = await messageResponse.json();
       console.log('✅ Direct API call successful');
@@ -1509,6 +1496,12 @@ async function sendMessage(chatId, message) {
     if (error.message.includes('fetch failed') || error.message.includes('SocketError') || error.message.includes('EADDRNOTAVAIL')) {
       console.error('🌐 Network connectivity issue detected');
       console.error('💡 This may be a DNS resolution or connectivity issue');
+    }
+    
+    // Handle timeout errors specifically
+    if (error.name === 'AbortError' || error.message.includes('aborted')) {
+      console.error('⏱️ Message sending timed out - Lark API too slow');
+      throw new Error('Message sending timed out due to network latency. Please try again.');
     }
     
     // Re-throw the error so it can be handled by calling functions
