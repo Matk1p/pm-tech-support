@@ -4685,6 +4685,7 @@ async function sendPageFAQs(chatId, pageKey) {
     });
     
     console.log('✅ FAQ options sent successfully');
+    const isServerless = !!process.env.VERCEL;
     return { success: true, cardType: isServerless ? 'simplified_faq' : 'full_faq' };
     
   } catch (error) {
@@ -4700,6 +4701,7 @@ async function sendPageFAQs(chatId, pageKey) {
         message += `**${index + 1}.** ${faq}\n\n`;
       });
       
+      const isServerless = !!process.env.VERCEL;
       if (isServerless) {
         message += `💬 **Type the number (1-${page.faqs.length}) or ask your question directly!**`;
       } else {
@@ -4767,15 +4769,37 @@ async function sendInteractiveCard(chatId, cardContent) {
       
       console.log('🚀 About to call SDK...');
       
-      // Add timeout to prevent hanging
+      // Add timeout and retry logic for network issues
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('SDK call timeout after 10 seconds')), 10000);
+        setTimeout(() => reject(new Error('SDK call timeout after 15 seconds')), 15000);
       });
       
-      const messageData = await Promise.race([
-        larkClient.im.message.create(cardParams),
-        timeoutPromise
-      ]);
+      let messageData;
+      let retryCount = 0;
+      const maxRetries = 2;
+      
+      while (retryCount <= maxRetries) {
+        try {
+          console.log(`🔄 SDK call attempt ${retryCount + 1}/${maxRetries + 1}`);
+          messageData = await Promise.race([
+            larkClient.im.message.create(cardParams),
+            timeoutPromise
+          ]);
+          break; // Success, exit retry loop
+        } catch (error) {
+          retryCount++;
+          console.log(`⚠️ SDK call attempt ${retryCount} failed:`, error.message);
+          
+          if (retryCount > maxRetries) {
+            throw error; // All retries exhausted
+          }
+          
+          // Wait before retry (exponential backoff)
+          const waitTime = Math.pow(2, retryCount) * 1000;
+          console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
       
       console.log('🎯 SDK call completed');
       
@@ -4925,13 +4949,17 @@ async function handleCardInteraction(event) {
       // FAQ selection
       console.log('🔍 ========== FAQ BUTTON DEBUG ==========');
       console.log('🔍 Raw action value:', actionValue);
+      console.log('🔍 Action value type:', typeof actionValue);
+      console.log('🔍 Action value length:', actionValue.length);
       
       const parts = actionValue.split('_');
       console.log('🔍 Split parts:', parts);
+      console.log('🔍 Number of parts:', parts.length);
       
       const [, pageKey, faqIndex] = parts;
       console.log('🔍 Page key:', pageKey);
       console.log('🔍 FAQ index:', faqIndex);
+      console.log('🔍 FAQ index type:', typeof faqIndex);
       
       const page = MAIN_PAGES[pageKey];
       console.log('🔍 Page found:', !!page);
@@ -4968,8 +4996,14 @@ Here's some quick guidance for this topic. For more detailed step-by-step instru
         
         console.log('📤 Sending pre-built FAQ response...');
         console.log('📊 Response length:', faqAnswer.length, 'characters');
+        console.log('📊 Chat ID:', chatId);
+        console.log('📊 FAQ text preview:', faq.substring(0, 100) + '...');
         
-        await sendMessage(chatId, `**${faq}**\n\n${faqAnswer}`);
+        const finalMessage = `**${faq}**\n\n${faqAnswer}`;
+        console.log('📊 Final message length:', finalMessage.length, 'characters');
+        
+        const messageResult = await sendMessage(chatId, finalMessage);
+        console.log('📊 Send message result:', messageResult);
         console.log('✅ Pre-built FAQ response sent successfully');
         
         // Reset user state to allow normal bot interaction
