@@ -492,6 +492,7 @@ app.post('/lark/events', async (req, res) => {
     console.log('  - Legacy type:', req.body.type);
     console.log('  - Has action:', !!req.body.action);
     console.log('  - Has event:', !!req.body.event);
+    console.log('🌐 Vercel deployment - single server.js handler');
     
     const { schema, header, event, challenge, type } = req.body;
 
