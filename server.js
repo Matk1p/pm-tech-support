@@ -839,7 +839,7 @@ async function handleMessage(event) {
       if (aiResponse && !responseMetadata.interactiveCard) {
         console.log('📤 Sending response to Lark...');
         // Send response back to Lark
-        await sendMessage(chatId, aiResponse);
+        await sendMessage(chat_id, aiResponse);
         console.log('🎉 Message sent successfully!');
       } else if (responseMetadata.interactiveCard) {
         console.log('🎯 Interactive card already sent, skipping text response');
@@ -847,7 +847,7 @@ async function handleMessage(event) {
       
       // Log the bot response with detailed metadata
       const botLogData = {
-        chatId: chatId,
+        chatId: chat_id,
         message: aiResponse,
         responseType: responseMetadata.responseType || 'ai_generated',
         processingTimeMs: responseMetadata.processingTimeMs || totalProcessingTime,
@@ -874,7 +874,7 @@ async function handleMessage(event) {
 }
 
 // Generate AI response using OpenAI
-async function generateAIResponse(userMessage, chatId, senderId = null) {
+async function generateAIResponse(userMessage, chat_id, senderId = null) {
   const startTime = Date.now();
   
   try {
@@ -884,29 +884,29 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
     console.log('🧠 Calling OpenAI with message:', userMessage);
     
     // Get or create conversation context
-    if (!conversationContext.has(chatId)) {
-      conversationContext.set(chatId, []);
+    if (!conversationContext.has(chat_id)) {
+      conversationContext.set(chat_id, []);
     }
     
-    const context = conversationContext.get(chatId);
+    const context = conversationContext.get(chat_id);
     console.log('📚 Current context length:', context.length);
     
     // Check if user is in ticket creation flow
-    const ticketState = ticketCollectionState.get(chatId);
+    const ticketState = ticketCollectionState.get(chat_id);
     if (ticketState) {
-      return await handleTicketCreationFlow(chatId, userMessage, ticketState, senderId);
+      return await handleTicketCreationFlow(chat_id, userMessage, ticketState, senderId);
     }
     
     // Check if user is in text-based interaction mode
-    const userState = userInteractionState.get(chatId);
+    const userState = userInteractionState.get(chat_id);
     if (userState && userState.step === 'text_page_selection') {
       console.log('📝 User in text page selection mode');
-      return await handleTextPageSelection(chatId, userMessage);
+      return await handleTextPageSelection(chat_id, userMessage);
     }
     
     if (userState && userState.step === 'text_faq_mode') {
       console.log('💬 User in text FAQ mode for page:', userState.selectedPage);
-      const textFAQResult = await handleTextFAQInteraction(chatId, userMessage, userState.selectedPage);
+      const textFAQResult = await handleTextFAQInteraction(chat_id, userMessage, userState.selectedPage);
       
       // If it's a direct response, return it
       if (textFAQResult && typeof textFAQResult === 'object' && !textFAQResult.continueToAI) {
@@ -925,7 +925,7 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
     if (isConfirmingTicket) {
       console.log('✅ User confirming ticket creation, starting flow...');
       const category = categorizeIssue(userMessage, context);
-      return await startTicketCreation(chatId, userMessage, category, senderId);
+      return await startTicketCreation(chat_id, userMessage, category, senderId);
     }
     
     // Check for simple greetings or restart commands - show page selection buttons
@@ -953,7 +953,7 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       console.log('👋 Greeting/restart detected, sending page selection buttons');
       
       // Clear user interaction state to reset the flow
-      userInteractionState.delete(chatId);
+      userInteractionState.delete(chat_id);
       
       let cardSent = false;
       
@@ -961,10 +961,10 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
         let cardResult;
         if (useSimpleCard) {
           // Send simplified card for serverless environment
-          cardResult = await sendSimplePageSelectionCard(chatId);
+          cardResult = await sendSimplePageSelectionCard(chat_id);
           console.log('✅ Simple page selection card sent successfully');
         } else {
-          cardResult = await sendPageSelectionMessage(chatId);
+          cardResult = await sendPageSelectionMessage(chat_id);
           console.log('✅ Page selection card sent successfully');
         }
         
@@ -993,7 +993,7 @@ Please let me know which page you need help with:
 Or ask me anything about PM-Next directly!`;
         
         try {
-          await sendMessage(chatId, fallbackMessage);
+          await sendMessage(chat_id, fallbackMessage);
           console.log('✅ Text fallback sent successfully');
         } catch (textError) {
           console.error('❌ Even text fallback failed:', textError.message);
@@ -1100,7 +1100,7 @@ Or ask me anything about PM-Next directly!`;
         }
         
         console.log('📂 Using escalation category:', escalationCategory);
-        return await startTicketCreation(chatId, userMessage, escalationCategory, senderId);
+        return await startTicketCreation(chat_id, userMessage, escalationCategory, senderId);
       }
       
       // Check if we've already shown FAQs for this specific category
@@ -1135,7 +1135,7 @@ If these don't resolve your issue, I can create a support ticket for you to get 
       } else {
         // Second escalation, general category, or no specific FAQs - start ticket creation
         console.log('🎫 Second escalation or general category, starting ticket creation immediately');
-        return await startTicketCreation(chatId, userMessage, category, senderId);
+        return await startTicketCreation(chat_id, userMessage, category, senderId);
       }
     }
     
@@ -1373,18 +1373,18 @@ async function getLarkUserInfo(userId) {
 }
 
 // Send message to Lark using SDK
-async function sendMessage(chatId, message) {
-  try {
-    console.log('📨 Sending message to chat:', chatId);
+async function sendMessage(chat_id, message) {
+      try {
+      console.log('📨 Sending message to chat:', chat_id);
     console.log('📝 Message content:', message);
     
     // Detect the ID type based on the chat ID format
     let receiveIdType = 'chat_id';
-    if (chatId.startsWith('ou_')) {
+    if (chat_id.startsWith('ou_')) {
       receiveIdType = 'open_id';
-    } else if (chatId.startsWith('oc_')) {
+    } else if (chat_id.startsWith('oc_')) {
       receiveIdType = 'chat_id';
-    } else if (chatId.startsWith('og_')) {
+    } else if (chat_id.startsWith('og_')) {
       receiveIdType = 'chat_id';
     }
 
@@ -1398,7 +1398,7 @@ async function sendMessage(chatId, message) {
           receive_id_type: receiveIdType
         },
         data: {
-          receive_id: chatId,
+          receive_id: chat_id,
           msg_type: 'text',
           content: JSON.stringify({
             text: message
@@ -2972,11 +2972,11 @@ function shouldEscalateToTicket(context, userMessage) {
   return shouldEscalate;
 }
 
-async function startTicketCreation(chatId, userMessage, category, senderId = null) {
-  console.log('🎫 Starting ticket creation for chat:', chatId);
+async function startTicketCreation(chat_id, userMessage, category, senderId = null) {
+  console.log('🎫 Starting ticket creation for chat:', chat_id);
   
   // Initialize ticket collection state with user information
-  ticketCollectionState.set(chatId, {
+  ticketCollectionState.set(chat_id, {
     step: 'title',
     category: category,
     originalMessage: userMessage,
@@ -2990,7 +2990,7 @@ async function startTicketCreation(chatId, userMessage, category, senderId = nul
 Please provide a brief title that describes your issue (e.g., "Cannot add candidate to job", "Login page not loading"):`;
 }
 
-async function handleTicketCreationFlow(chatId, userMessage, ticketState, senderId = null) {
+async function handleTicketCreationFlow(chat_id, userMessage, ticketState, senderId = null) {
   const { step, data, category, senderId: storedSenderId } = ticketState;
   const actualSenderId = senderId || storedSenderId;
   
@@ -2998,7 +2998,7 @@ async function handleTicketCreationFlow(chatId, userMessage, ticketState, sender
     case 'title':
       data.title = userMessage.trim();
       ticketState.step = 'description';
-      ticketCollectionState.set(chatId, ticketState);
+      ticketCollectionState.set(chat_id, ticketState);
       
       return `**Step 2 of 3: Detailed Description**
 Please describe the issue in detail. What exactly happens when you try to perform the action?`;
@@ -3006,7 +3006,7 @@ Please describe the issue in detail. What exactly happens when you try to perfor
     case 'description':
       data.description = userMessage.trim();
       ticketState.step = 'steps';
-      ticketCollectionState.set(chatId, ticketState);
+      ticketCollectionState.set(chat_id, ticketState);
       
       return `**Step 3 of 3: Steps Attempted**
 What steps have you already tried to resolve this issue? (e.g., "Refreshed page, cleared cache, tried different browser")`;
@@ -3020,10 +3020,10 @@ What steps have you already tried to resolve this issue? (e.g., "Refreshed page,
       data.urgency = 'medium'; // Default urgency level
       
       // Create the ticket immediately after step 3
-      const ticket = await createTicketFromData(chatId, data, category, ticketState.originalMessage, actualSenderId);
+      const ticket = await createTicketFromData(chat_id, data, category, ticketState.originalMessage, actualSenderId);
       
       // Clear the collection state
-      ticketCollectionState.delete(chatId);
+      ticketCollectionState.delete(chat_id);
       
       if (ticket) {
         console.log('🎯 Ticket created successfully, notifying support team...');
@@ -3075,15 +3075,15 @@ I apologize for the inconvenience. Our technical team has been notified of this 
 
     default:
       // Reset if in unknown state
-      ticketCollectionState.delete(chatId);
+      ticketCollectionState.delete(chat_id);
       return `I encountered an error in the ticket creation process. Let me start over. Please describe your issue and I'll help you create a support ticket.`;
   }
 }
 
-async function createTicketFromData(chatId, data, category, originalMessage, senderId = null) {
+async function createTicketFromData(chat_id, data, category, originalMessage, senderId = null) {
   try {
     console.log('🔧 Creating ticket with data:', {
-      chatId,
+      chat_id,
       category,
       title: data.title,
       urgency: data.urgency,
@@ -3092,7 +3092,7 @@ async function createTicketFromData(chatId, data, category, originalMessage, sen
     
     // Get actual user info from Lark
     let userInfo = null;
-    let actualUserId = senderId?.id || `user_${chatId}`;
+    let actualUserId = senderId?.id || `user_${chat_id}`;
     let actualUserName = 'Lark User';
     
     console.log('🔍 Analyzing sender ID for user info:', JSON.stringify(senderId, null, 2));
@@ -3122,7 +3122,7 @@ async function createTicketFromData(chatId, data, category, originalMessage, sen
     
     const ticketData = {
       user_id: actualUserId,
-      chat_id: chatId,
+      chat_id: chat_id,
       user_name: actualUserName,
       issue_category: category,
       issue_title: data.title,
