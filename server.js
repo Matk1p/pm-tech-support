@@ -516,7 +516,6 @@ app.post('/lark/events', async (req, res) => {
     // Handle new format events
     if (header && header.event_type === 'im.message.receive_v1' && event) {
       console.log('📨 Message event received from header');
-      console.log('📋 Event structure:', Object.keys(event));
       
       // Check for duplicate events
       const eventId = header.event_id;
@@ -528,6 +527,13 @@ app.post('/lark/events', async (req, res) => {
       // Mark event as processed
       processedEvents.add(eventId);
       
+      // RESPOND TO LARK IMMEDIATELY to prevent timeout
+      res.status(200).json({ 
+        success: true, 
+        message: 'Message received, processing in background',
+        timestamp: new Date().toISOString()
+      });
+      
       // Clean up old event IDs (keep only last 1000 to prevent memory issues)
       if (processedEvents.size > 1000) {
         const eventsArray = Array.from(processedEvents);
@@ -535,13 +541,21 @@ app.post('/lark/events', async (req, res) => {
         eventsArray.slice(-500).forEach(id => processedEvents.add(id));
       }
       
-      // Check if this is a message event by looking for the message property
+      // Process message in background without blocking response
       if (event.message) {
-        console.log('💬 Processing message event');
-        await handleMessage(event);
+        console.log('💬 Processing message event in background');
+        setImmediate(async () => {
+          try {
+            await handleMessage(event);
+          } catch (error) {
+            console.error('❌ Background message processing error:', error);
+          }
+        });
       } else {
         console.log('⏭️ Not a message event, skipping');
       }
+      
+      return; // Exit early since we already responded
     } 
     // Handle card interaction events
     else if (header && header.event_type === 'card.action.trigger' && event) {

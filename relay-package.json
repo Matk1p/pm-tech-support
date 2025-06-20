@@ -1,0 +1,23 @@
+{
+  "name": "lark-relay-service",
+  "version": "1.0.0",
+  "description": "Relay service to handle Lark webhooks without timeout limits",
+  "main": "relay-service.js",
+  "scripts": {
+    "start": "node relay-service.js",
+    "dev": "nodemon relay-service.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.5.0",
+    "@lark-opensdk/node-sdk": "^1.13.0",
+    "openai": "^4.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+} 
