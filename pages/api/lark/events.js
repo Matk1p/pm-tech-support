@@ -1,5 +1,5 @@
 // Next.js API Route for Lark Webhooks - Complete Bot Implementation
-import { Client, Domain } from '@larksuiteoapi/node-sdk';
+import { Client } from '@larksuiteoapi/node-sdk';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 
@@ -23,9 +23,7 @@ validateEnvironment();
 const larkClient = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
-  domain: Domain.Feishu,
-  loggerLevel: 'info', // Add logging for debugging
-  disableTokenCache: false // Enable token caching
+  loggerLevel: 'info'
 });
 
 console.log('✅ Lark client initialized with App ID:', process.env.LARK_APP_ID?.slice(0, 8) + '...');
