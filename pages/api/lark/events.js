@@ -643,13 +643,23 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 async function sendMessageToLark(chatId, message) {
   console.log('SIMPLE: Attempting to send message to:', chatId?.substring(0, 10));
   
+  // Quick environment check
+  console.log('SIMPLE: Env check:', {
+    hasAppId: !!process.env.LARK_APP_ID,
+    hasAppSecret: !!process.env.LARK_APP_SECRET,
+    appIdLength: process.env.LARK_APP_ID?.length || 0
+  });
+  
   try {
     if (!larkClient) {
       console.log('SIMPLE: No Lark client');
       return false;
     }
 
-    const result = await larkClient.im.message.create({
+    console.log('SIMPLE: About to call Lark API...');
+    
+    // Manual timeout to prevent infinite hanging
+    const apiCall = larkClient.im.message.create({
       params: { receive_id_type: 'chat_id' },
       data: {
         receive_id: chatId,
@@ -658,6 +668,18 @@ async function sendMessageToLark(chatId, message) {
         uuid: `simple_${Date.now()}`
       }
     });
+
+    console.log('SIMPLE: API call initiated, waiting for response...');
+
+    const result = await Promise.race([
+      apiCall,
+      new Promise((_, reject) => 
+        setTimeout(() => {
+          console.log('SIMPLE: Timeout after 8 seconds');
+          reject(new Error('Timeout'));
+        }, 8000)
+      )
+    ]);
 
     console.log('SIMPLE: Result code:', result?.code);
     
@@ -670,7 +692,8 @@ async function sendMessageToLark(chatId, message) {
     }
     
   } catch (error) {
-    console.log('SIMPLE: Error:', error.message);
+    console.log('SIMPLE: Error caught:', error.message);
+    console.log('SIMPLE: Error type:', error.constructor.name);
     return false;
   }
 }
