@@ -21,23 +21,40 @@ function validateEnvironment() {
   return true;
 }
 
-// Initialize clients with validation
-validateEnvironment();
+// Global client instances (will be initialized on first use)
+let larkClient;
+let openai;
+let supabase;
 
-const larkClient = new Client({
-  appId: process.env.LARK_APP_ID,
-  appSecret: process.env.LARK_APP_SECRET,
-  loggerLevel: 'warn'
-});
+// Initialize clients (NextJS-compatible lazy initialization)
+function initializeClients() {
+  if (!larkClient) {
+    validateEnvironment();
+    
+    console.log('Initializing Lark client...');
+    larkClient = new Client({
+      appId: process.env.LARK_APP_ID,
+      appSecret: process.env.LARK_APP_SECRET,
+      loggerLevel: 'warn'
+    });
+    console.log('Lark client initialized');
+  }
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+  if (!openai) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+  if (!supabase) {
+    supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY
+    );
+  }
+  
+  return { larkClient, openai, supabase };
+}
 
 // In-memory storage (consider using external storage for production)
 const processedEvents = new Set();
@@ -117,11 +134,14 @@ Common workflows:
 Always provide specific, actionable steps when helping users.`;
 
 export default async function handler(req, res) {
+  // Initialize clients for this request (NextJS serverless pattern)
+  const { larkClient: client, openai: openaiClient, supabase: supabaseClient } = initializeClients();
+  
   // Handle GET requests (for health checks and verification)
   if (req.method === 'GET') {
     try {
       // Test Lark client initialization
-      const clientStatus = larkClient ? 'initialized' : 'not initialized';
+      const clientStatus = client ? 'initialized' : 'not initialized';
       
       return res.status(200).json({ 
         status: 'ok',
@@ -139,7 +159,7 @@ export default async function handler(req, res) {
         }
       });
     } catch (error) {
-      console.error('❌ Health check error:', error);
+      console.error('Health check error:', error);
       return res.status(500).json({ 
         status: 'error',
         message: 'Health check failed',
@@ -200,11 +220,11 @@ export default async function handler(req, res) {
       // Process in background with proper error handling
       setImmediate(async () => {
         try {
-          console.log('🚀 Starting message processing for event:', eventId);
-          await processMessage(event);
-          console.log('✅ Message processing completed for event:', eventId);
+          console.log('Starting message processing for event:', eventId);
+          await processMessage(event, client, openaiClient, supabaseClient);
+          console.log('Message processing completed for event:', eventId);
         } catch (error) {
-          console.error('❌ Background message processing failed:', {
+          console.error('Background message processing failed:', {
             eventId: eventId,
             message: error.message,
             name: error.name,
@@ -236,7 +256,7 @@ export default async function handler(req, res) {
 }
 
 // Process message in background
-async function processMessage(event) {
+async function processMessage(event, client, openaiClient, supabaseClient) {
   try {
     const chatId = event.message?.chat_id;
     const messageContent = event.message?.content;
@@ -278,45 +298,45 @@ async function processMessage(event) {
     // Check if user is in ticket creation flow
     if (ticketCollectionState.has(chatId)) {
       console.log('🎫 Processing ticket flow');
-      const ticketResponse = await handleTicketCreationFlow(chatId, userMessage, ticketCollectionState.get(chatId), senderId);
-      if (ticketResponse) {
-        await sendMessageToLark(chatId, ticketResponse);
-        return;
+      const ticketResponse = await handleTicketCreationFlow(chatId, userMessage, ticketCollectionState.get(chatId), senderId, supabaseClient);
+              if (ticketResponse) {
+          await sendMessageToLark(chatId, ticketResponse, client);
+          return;
+        }
       }
-    }
 
-    // Generate AI response
-    console.log('🤖 Generating AI response for:', userMessage);
-    const aiResponseData = await generateAIResponse(userMessage, chatId, senderId);
-    
-    if (aiResponseData) {
-      const aiResponse = typeof aiResponseData === 'string' ? aiResponseData : aiResponseData.response;
+      // Generate AI response
+      console.log('Generating AI response for:', userMessage);
+      const aiResponseData = await generateAIResponse(userMessage, chatId, senderId, openaiClient);
       
-      if (aiResponse) {
-        console.log('📤 Sending response:', aiResponse.substring(0, 100) + '...');
-        await sendMessageToLark(chatId, aiResponse);
-        console.log('✅ Response sent successfully');
+      if (aiResponseData) {
+        const aiResponse = typeof aiResponseData === 'string' ? aiResponseData : aiResponseData.response;
+        
+        if (aiResponse) {
+          console.log('Sending response:', aiResponse.substring(0, 100) + '...');
+          await sendMessageToLark(chatId, aiResponse, client);
+          console.log('Response sent successfully');
+        } else {
+          console.log('No response content to send');
+        }
       } else {
-        console.log('⚠️ No response content to send');
+        console.log('No AI response generated');
       }
-    } else {
-      console.log('⚠️ No AI response generated');
-    }
 
-  } catch (error) {
-    console.error('❌ Message processing error:', error);
-    console.error('❌ Full error stack:', error.stack);
-    
-    try {
-      await sendMessageToLark(event.message.chat_id, 'I encountered an issue processing your message. Please try again or contact support.');
-    } catch (fallbackError) {
-      console.error('❌ Fallback message failed:', fallbackError);
+      } catch (error) {
+      console.error('Message processing error:', error);
+      console.error('Full error stack:', error.stack);
+      
+      try {
+        await sendMessageToLark(event.message.chat_id, 'I encountered an issue processing your message. Please try again or contact support.', client);
+      } catch (fallbackError) {
+        console.error('Fallback message failed:', fallbackError);
+      }
     }
-  }
 }
 
 // Generate AI response with full logic
-async function generateAIResponse(userMessage, chatId, senderId = null) {
+async function generateAIResponse(userMessage, chatId, senderId = null, openaiClient) {
   try {
     // Check for greeting/restart patterns
     const greetingPatterns = [
@@ -375,7 +395,7 @@ Please tell me what you need help with, and I'll provide detailed guidance!`;
       }
     ];
 
-    const completion = await openai.chat.completions.create({
+    const completion = await openaiClient.chat.completions.create({
       model: selectedModel,
       messages: messages,
       max_tokens: 800,
@@ -524,7 +544,7 @@ Please describe the details, and I'll create a support ticket for you.`;
   }
 }
 
-async function handleTicketCreationFlow(chatId, userMessage, ticketState, senderId = null) {
+async function handleTicketCreationFlow(chatId, userMessage, ticketState, senderId = null, supabaseClient) {
   try {
     if (ticketState.step === 'awaiting_description') {
       // Create the ticket with collected information
@@ -539,7 +559,7 @@ async function handleTicketCreationFlow(chatId, userMessage, ticketState, sender
         created_at: new Date().toISOString()
       };
 
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from(SUPPORT_TICKETS_TABLE)
         .insert([ticketData])
         .select();
@@ -640,7 +660,7 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 }
 
 // Send text message to Lark - SIMPLIFIED VERSION
-async function sendMessageToLark(chatId, message) {
+async function sendMessageToLark(chatId, message, larkClient) {
   console.log('SIMPLE: Attempting to send message to:', chatId?.substring(0, 10));
   
   // Quick environment check
