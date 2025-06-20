@@ -154,6 +154,12 @@ export default async function handler(req, res) {
   }
 
   try {
+    console.log('📨 Webhook received:', {
+      hasBody: !!req.body,
+      bodyKeys: req.body ? Object.keys(req.body) : [],
+      timestamp: new Date().toISOString()
+    });
+
     const body = req.body;
     const header = body.header;
     const event = body.event;
@@ -169,8 +175,15 @@ export default async function handler(req, res) {
 
     // Check if we have required fields
     if (!header || !event) {
+      console.log('❌ Missing header or event data:', { hasHeader: !!header, hasEvent: !!event });
       return;
     }
+
+    console.log('📝 Event received:', {
+      eventType: header?.event_type,
+      eventId: header?.event_id,
+      hasMessage: !!event.message
+    });
 
     // Handle message events
     if (header?.event_type === 'im.message.receive_v1' && event) {
@@ -178,6 +191,7 @@ export default async function handler(req, res) {
       
       // Check for duplicates
       if (processedEvents.has(eventId)) {
+        console.log('🔄 Duplicate event skipped:', eventId);
         return;
       }
       
@@ -186,14 +200,23 @@ export default async function handler(req, res) {
       // Process in background with proper error handling
       setImmediate(async () => {
         try {
+          console.log('🚀 Starting message processing for event:', eventId);
           await processMessage(event);
+          console.log('✅ Message processing completed for event:', eventId);
         } catch (error) {
           console.error('❌ Background message processing failed:', {
+            eventId: eventId,
             message: error.message,
             name: error.name,
             stack: error.stack?.split('\n').slice(0, 5)
           });
         }
+      });
+    } else {
+      console.log('⏭️ Non-message event or missing data:', {
+        eventType: header?.event_type,
+        hasEvent: !!event,
+        hasMessage: !!event?.message
       });
     }
 
@@ -219,7 +242,18 @@ async function processMessage(event) {
     const messageContent = event.message?.content;
     const senderId = event.sender?.sender_id?.user_id;
     
+    console.log('🔍 Processing message:', {
+      chatId: chatId,
+      hasContent: !!messageContent,
+      senderId: senderId,
+      messageType: event.message?.message_type
+    });
+
     if (!chatId || !messageContent) {
+      console.log('❌ Missing required data:', { 
+        hasChatId: !!chatId, 
+        hasMessageContent: !!messageContent 
+      });
       return;
     }
 
@@ -229,17 +263,21 @@ async function processMessage(event) {
       contentObj = JSON.parse(messageContent);
     } catch (parseError) {
       console.error('❌ Failed to parse message content:', parseError);
+      console.log('📄 Raw content:', messageContent);
       return;
     }
     
     const userMessage = extractTextFromMessage(contentObj);
+    console.log('💬 User message extracted:', userMessage);
     
     if (!userMessage.trim()) {
+      console.log('⚠️ Empty message after extraction');
       return;
     }
 
     // Check if user is in ticket creation flow
     if (ticketCollectionState.has(chatId)) {
+      console.log('🎫 Processing ticket flow');
       const ticketResponse = await handleTicketCreationFlow(chatId, userMessage, ticketCollectionState.get(chatId), senderId);
       if (ticketResponse) {
         await sendMessageToLark(chatId, ticketResponse);
@@ -248,18 +286,26 @@ async function processMessage(event) {
     }
 
     // Generate AI response
+    console.log('🤖 Generating AI response for:', userMessage);
     const aiResponseData = await generateAIResponse(userMessage, chatId, senderId);
     
     if (aiResponseData) {
       const aiResponse = typeof aiResponseData === 'string' ? aiResponseData : aiResponseData.response;
       
       if (aiResponse) {
+        console.log('📤 Sending response:', aiResponse.substring(0, 100) + '...');
         await sendMessageToLark(chatId, aiResponse);
+        console.log('✅ Response sent successfully');
+      } else {
+        console.log('⚠️ No response content to send');
       }
+    } else {
+      console.log('⚠️ No AI response generated');
     }
 
   } catch (error) {
     console.error('❌ Message processing error:', error);
+    console.error('❌ Full error stack:', error.stack);
     
     try {
       await sendMessageToLark(event.message.chat_id, 'I encountered an issue processing your message. Please try again or contact support.');
@@ -597,23 +643,45 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 async function sendMessageToLark(chatId, message) {
   let retries = 3;
   
+  console.log('📤 Attempting to send message:', {
+    chatId: chatId,
+    messageLength: message?.length,
+    hasLarkClient: !!larkClient
+  });
+
   while (retries > 0) {
     try {
       if (!larkClient) {
         throw new Error('Lark client not initialized');
       }
 
+      const messageData = {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text: message }),
+        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      };
+
+      console.log('🔧 Calling Lark API with:', {
+        receive_id: messageData.receive_id,
+        msg_type: messageData.msg_type,
+        uuid: messageData.uuid,
+        contentPreview: messageData.content.substring(0, 100) + '...'
+      });
+
       const result = await larkClient.im.message.create({
         params: { receive_id_type: 'chat_id' },
-        data: {
-          receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({ text: message }),
-          uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        }
+        data: messageData
+      });
+
+      console.log('📬 Lark API response:', {
+        code: result.code,
+        msg: result.msg,
+        messageId: result.data?.message_id
       });
 
       if (result.code === 0) {
+        console.log('✅ Message sent successfully to Lark');
         return result;
       } else {
         console.error('❌ Message sending failed with Lark error:');
@@ -632,7 +700,8 @@ async function sendMessageToLark(chatId, message) {
       retries--;
       console.error(`❌ Message sending error (${retries} retries left):`, {
         message: error.message,
-        chatId: chatId
+        chatId: chatId,
+        errorType: error.constructor.name
       });
       
       if (retries === 0) {
