@@ -325,15 +325,15 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
     ];
     
     if (greetingPatterns.some(pattern => pattern.test(userMessage.trim()))) {
-      return `👋 Welcome to PM-Next Support Bot! 🤖
+      return `Welcome to PM-Next Support Bot!
 
 I can help you with:
-📊 **Dashboard** - Overview and analytics
-💼 **Jobs** - Job posting and management
-👥 **Candidates** - Candidate profiles and management
-🏢 **Clients** - Client and company management
-📅 **Calendar** - Interview scheduling and calendar management
-💰 **Claims** - Billing and financial tracking
+**Dashboard** - Overview and analytics
+**Jobs** - Job posting and management
+**Candidates** - Candidate profiles and management
+**Clients** - Client and company management
+**Calendar** - Interview scheduling and calendar management
+**Claims** - Billing and financial tracking
 
 Please tell me what you need help with, and I'll provide detailed guidance!`;
     }
@@ -553,7 +553,7 @@ async function handleTicketCreationFlow(chatId, userMessage, ticketState, sender
       const ticketNumber = data[0].id;
       ticketCollectionState.delete(chatId);
       
-      return `✅ **Support Ticket Created Successfully!**
+      return `**Support Ticket Created Successfully!**
 
 **Ticket Number**: #${ticketNumber}
 **Category**: ${ticketState.category}
@@ -590,10 +590,10 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 5. **Save**: Click "Save" or "Publish" to make it live
 
 **Pro Tips:**
-• Use clear, specific job titles
-• Include salary range to attract better candidates
-• Set realistic requirements
-• Preview before publishing`;
+- Use clear, specific job titles
+- Include salary range to attract better candidates
+- Set realistic requirements
+- Preview before publishing`;
     }
     
     if (pageKey === 'candidates' && faqQuestion.includes('add')) {
@@ -607,9 +607,9 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 6. **Save**: Click "Save Candidate"
 
 **Common Issues:**
-• Make sure all required fields (*) are filled
-• Check file format and size for resume uploads
-• Ensure email format is valid`;
+- Make sure all required fields (*) are filled
+- Check file format and size for resume uploads
+- Ensure email format is valid`;
     }
     
     // Fallback to OpenAI for complex questions
@@ -641,7 +641,7 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 
 // Send text message to Lark
 async function sendMessageToLark(chatId, message) {
-  console.log('🚨 [DEBUG] sendMessageToLark function called:', {
+  console.log('[DEBUG] sendMessageToLark function called:', {
     chatId: chatId?.substring(0, 10) + '...',
     messageLength: message?.length,
     timestamp: new Date().toISOString()
@@ -649,34 +649,13 @@ async function sendMessageToLark(chatId, message) {
 
   let retries = 3;
   
-  console.log('📤 Attempting to send message:', {
+  console.log('Attempting to send message:', {
     chatId: chatId,
     messageLength: message?.length,
     hasLarkClient: !!larkClient
   });
 
-  // Quick token validation (non-blocking)
-  console.log('🚨 [DEBUG] Starting token validation...');
-  try {
-    const tokenTest = await Promise.race([
-      larkClient.auth.tenantAccessToken.internal({
-        data: {
-          app_id: process.env.LARK_APP_ID,
-          app_secret: process.env.LARK_APP_SECRET
-        }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Token validation timeout')), 5000))
-    ]);
-    
-    console.log('🔑 Token validation:', {
-      code: tokenTest.code,
-      hasToken: !!tokenTest.tenant_access_token
-    });
-  } catch (tokenError) {
-    console.error('❌ Token validation failed (continuing anyway):', tokenError.message);
-  }
-  
-  console.log('🚨 [DEBUG] Proceeding to message sending...');
+  console.log('[DEBUG] Proceeding directly to message sending...');
 
   while (retries > 0) {
     try {
@@ -691,7 +670,7 @@ async function sendMessageToLark(chatId, message) {
         uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       };
 
-      console.log('🔧 Calling Lark API with:', {
+      console.log('Calling Lark API with:', {
         receive_id: messageData.receive_id,
         msg_type: messageData.msg_type,
         uuid: messageData.uuid,
@@ -716,23 +695,23 @@ async function sendMessageToLark(chatId, message) {
         10000 // 10 second timeout
       );
 
-      console.log('📬 Lark API response:', {
+      console.log('Lark API response:', {
         code: result.code,
         msg: result.msg,
         messageId: result.data?.message_id
       });
 
       if (result.code === 0) {
-        console.log('✅ Message sent successfully to Lark');
+        console.log('Message sent successfully to Lark');
         return result;
       } else {
-        console.error('❌ Message sending failed with Lark error:');
+        console.error('Message sending failed with Lark error:');
         console.error('- Error Code:', result.code);
         console.error('- Error Message:', result.msg);
         console.error('- Error Data:', result.data);
         
         if (result.code === 230002) {
-          console.error('🔧 SOLUTION: Bot not in chat. Add bot to the chat/conversation first.');
+          console.error('SOLUTION: Bot not in chat. Add bot to the chat/conversation first.');
           console.error('   Chat ID:', chatId);
         }
         
@@ -740,14 +719,14 @@ async function sendMessageToLark(chatId, message) {
       }
     } catch (error) {
       retries--;
-      console.error(`❌ Message sending error (${retries} retries left):`, {
+      console.error(`Message sending error (${retries} retries left):`, {
         message: error.message,
         chatId: chatId,
         errorType: error.constructor.name
       });
       
       if (retries === 0) {
-        console.error('❌ All message retries failed, giving up');
+        console.error('All message retries failed, giving up');
         throw error;
       }
       
