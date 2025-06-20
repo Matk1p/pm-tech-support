@@ -217,8 +217,19 @@ export default async function handler(req, res) {
 
   try {
     console.log('📨 Lark webhook received');
+    console.log('🔍 Request method:', req.method);
+    console.log('🔍 Request headers:', JSON.stringify(req.headers, null, 2));
+    console.log('🔍 Request body:', JSON.stringify(req.body, null, 2));
 
     const { header, event, challenge, type } = req.body;
+    
+    console.log('🔍 Parsed webhook data:', {
+      hasHeader: !!header,
+      hasEvent: !!event,
+      hasChallenge: !!challenge,
+      type: type,
+      eventType: header?.event_type
+    });
 
     // Handle URL verification
     if (type === 'url_verification') {
@@ -235,6 +246,14 @@ export default async function handler(req, res) {
 
     // Handle message events
     if (header?.event_type === 'im.message.receive_v1' && event?.message) {
+      console.log('📨 Message event received:', {
+        eventType: header.event_type,
+        eventId: header.event_id,
+        chatId: event.message?.chat_id,
+        messageType: event.message?.message_type,
+        senderId: event.sender?.sender_id
+      });
+      
       const eventId = header.event_id;
       
       // Check for duplicates
@@ -265,40 +284,61 @@ export default async function handler(req, res) {
       setImmediate(() => processCardInteraction(event));
     }
 
-  } catch (error) {
-    console.error('❌ Webhook error:', error);
-    
-    // Still return success to prevent Lark retries
-    if (!res.headersSent) {
-      res.status(200).json({ 
-        success: false, 
-        error: 'Processing error',
-        timestamp: new Date().toISOString()
-      });
+      } catch (error) {
+      console.error('❌ Webhook error:', error);
+      console.error('❌ Error stack:', error.stack);
+      console.log('🔍 Request body that caused error:', JSON.stringify(req.body, null, 2));
+      
+      // Still return success to prevent Lark retries
+      if (!res.headersSent) {
+        res.status(200).json({ 
+          success: false, 
+          error: 'Processing error',
+          timestamp: new Date().toISOString()
+        });
+      }
     }
-  }
 }
 
 // Process message in background
 async function processMessage(event) {
   try {
     console.log('💬 Processing message in background');
+    console.log('🔍 Full event object:', JSON.stringify(event, null, 2));
     
-    const chatId = event.message.chat_id;
-    const messageContent = event.message.content;
+    const chatId = event.message?.chat_id;
+    const messageContent = event.message?.content;
     const senderId = event.sender?.sender_id?.user_id;
     
+    console.log('🔍 Extracted data:', {
+      chatId,
+      messageContent: messageContent?.substring(0, 100),
+      senderId,
+      hasMessage: !!event.message,
+      messageType: event.message?.message_type
+    });
+    
     if (!chatId || !messageContent) {
-      console.log('⏭️ Missing chat ID or content');
+      console.log('⏭️ Missing chat ID or content:', { chatId: !!chatId, content: !!messageContent });
       return;
     }
 
     // Extract message text
-    const contentObj = JSON.parse(messageContent);
+    let contentObj;
+    try {
+      contentObj = JSON.parse(messageContent);
+      console.log('🔍 Parsed content object:', contentObj);
+    } catch (parseError) {
+      console.error('❌ Failed to parse message content:', parseError);
+      console.log('🔍 Raw message content:', messageContent);
+      return;
+    }
+    
     const userMessage = extractTextFromMessage(contentObj);
+    console.log('🔍 Extracted user message:', userMessage);
     
     if (!userMessage.trim()) {
-      console.log('⏭️ Empty message');
+      console.log('⏭️ Empty message after extraction');
       return;
     }
 
