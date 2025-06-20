@@ -1,47 +1,41 @@
 {
   "name": "pm-next-lark-bot",
   "version": "1.0.0",
-  "description": "Lark bot for PM-Next Recruitment Management System",
-  "main": "server.js",
+  "description": "Lark bot for PM-Next Recruitment Management System - Next.js Version",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
-    "build": "npm run validate:env && npm run build:check",
-    "build:check": "node -c server.js && echo '✅ Build validation passed'",
-    "build:clean": "rm -rf dist && mkdir -p dist",
-    "build:copy": "cp -r . dist/ && rm -rf dist/node_modules dist/.git",
-    "build:prod": "npm run build:clean && npm run validate:env && npm run build:copy && cd dist && npm install --production",
-    "validate:env": "node -e \"require('dotenv').config(); const required=['LARK_APP_ID','LARK_APP_SECRET','OPENAI_API_KEY']; const missing=required.filter(key=>!process.env[key]); if(missing.length){console.error('❌ Missing environment variables:',missing.join(', ')); process.exit(1);} console.log('✅ Environment variables validated');\"",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "validate:env": "node -e \"require('dotenv').config(); const required=['LARK_APP_ID','LARK_APP_SECRET','OPENAI_API_KEY','SUPABASE_URL','SUPABASE_ANON_KEY']; const missing=required.filter(key=>!process.env[key]); if(missing.length){console.error('❌ Missing environment variables:',missing.join(', ')); process.exit(1);} console.log('✅ Environment variables validated');\"",
     "test-local": "node test-setup.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "vercel-build": "npm run build",
     "setup": "node setup.js",
     "knowledge": "node knowledge-extractor.js",
-    "health-check": "curl -f http://localhost:3001/health || exit 1",
-    "deploy:check": "npm run build && npm run health-check"
+    "vercel-build": "next build"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.22.0",
     "@supabase/supabase-js": "^2.50.0",
-    "axios": "^1.6.0",
-    "body-parser": "^1.20.2",
-    "cors": "^2.8.5",
-    "crypto": "^1.0.1",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "node-fetch": "^3.3.2",
+    "next": "^14.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "openai": "^4.20.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
   },
   "keywords": [
     "lark",
     "bot",
     "recruitment",
     "openai",
-    "pm-next"
+    "pm-next",
+    "nextjs"
   ],
   "author": "Your Name",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }

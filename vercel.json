@@ -1,16 +1,12 @@
 {
-  "version": 2,
   "name": "pm-next-lark-bot",
-  "builds": [
-    {
-      "src": "server.js",
-      "use": "@vercel/node"
+  "framework": "nextjs",
+  "functions": {
+    "pages/api/lark/events.js": {
+      "maxDuration": 30
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "server.js"
-    }
-  ]
+  },
+  "env": {
+    "NODE_ENV": "production"
+  }
 }
