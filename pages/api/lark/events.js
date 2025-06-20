@@ -1,5 +1,5 @@
 // Next.js API Route for Lark Webhooks - Complete Bot Implementation
-import { Client } from '@larksuiteoapi/node-sdk';
+import { Client, Domain } from '@larksuiteoapi/node-sdk';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 

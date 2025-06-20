@@ -1,10 +1,10 @@
-import * as lark from '@larksuite/node-sdk';
+import { Client } from '@larksuiteoapi/node-sdk';
 
 // Initialize Lark client
-const larkClient = new lark.Client({
+const larkClient = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
-  loggerLevel: lark.LoggerLevel.info
+  loggerLevel: 'info'
 });
 
 // Debug endpoint to test Lark SDK
