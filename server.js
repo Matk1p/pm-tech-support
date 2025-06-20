@@ -5099,58 +5099,62 @@ Here's some quick guidance for this topic. For more detailed step-by-step instru
         // Reset user state to allow normal bot interaction
         userInteractionState.delete(chatId);
         
-        // Send follow-up card with navigation options
-        setTimeout(async () => {
-          try {
-            const followUpCard = {
-              "elements": [
-                {
-                  "tag": "div",
-                  "text": {
-                    "content": "Need more help?",
-                    "tag": "plain_text"
-                  }
-                },
-                {
-                  "tag": "action",
-                  "actions": [
-                    {
-                      "tag": "button",
-                      "text": {
-                        "content": "🔙 Back to FAQs",
-                        "tag": "plain_text"
-                      },
-                      "type": "default",
-                      "value": pageKey
-                    },
-                    {
-                      "tag": "button",
-                      "text": {
-                        "content": "🏠 Main Menu",
-                        "tag": "plain_text"
-                      },
-                      "type": "default",
-                      "value": "back_to_pages"
-                    },
-                    {
-                      "tag": "button",
-                      "text": {
-                        "content": "💬 Ask Question",
-                        "tag": "plain_text"
-                      },
-                      "type": "primary",
-                      "value": "custom_question"
-                    }
-                  ]
+        // Send follow-up card with navigation options immediately
+        try {
+          console.log('📋 Sending follow-up navigation card...');
+          const followUpCard = {
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "content": "Need more help?",
+                  "tag": "plain_text"
                 }
-              ]
-            };
-            
-            await sendInteractiveCard(chatId, followUpCard);
-          } catch (followUpError) {
-            console.log('⚠️ Follow-up card failed (non-critical):', followUpError.message);
+              },
+              {
+                "tag": "action",
+                "actions": [
+                  {
+                    "tag": "button",
+                    "text": {
+                      "content": "🔙 Back to FAQs",
+                      "tag": "plain_text"
+                    },
+                    "type": "default",
+                    "value": pageKey
+                  },
+                  {
+                    "tag": "button",
+                    "text": {
+                      "content": "🏠 Main Menu",
+                      "tag": "plain_text"
+                    },
+                    "type": "default",
+                    "value": "back_to_pages"
+                  },
+                  {
+                    "tag": "button",
+                    "text": {
+                      "content": "💬 Ask Question",
+                      "tag": "plain_text"
+                    },
+                    "type": "primary",
+                    "value": "custom_question"
+                  }
+                ]
+              }
+            ]
+          };
+          
+          const followUpResult = await sendInteractiveCard(chatId, followUpCard);
+          if (followUpResult && followUpResult.success !== false) {
+            console.log('✅ Follow-up navigation card sent successfully');
+          } else {
+            console.log('⚠️ Follow-up card failed, continuing without it');
           }
-        }, 1500);
+        } catch (followUpError) {
+          console.log('⚠️ Follow-up card failed (non-critical):', followUpError.message);
+        }
         
       } catch (error) {
         console.error('❌ ========== FAQ RESPONSE ERROR ==========');
