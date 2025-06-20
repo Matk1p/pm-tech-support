@@ -669,10 +669,23 @@ async function sendMessageToLark(chatId, message) {
         contentPreview: messageData.content.substring(0, 100) + '...'
       });
 
-      const result = await larkClient.im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: messageData
-      });
+      // Add timeout wrapper to prevent hanging
+      const callWithTimeout = (promise, timeoutMs) => {
+        return Promise.race([
+          promise,
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('API call timeout')), timeoutMs)
+          )
+        ]);
+      };
+
+      const result = await callWithTimeout(
+        larkClient.im.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: messageData
+        }),
+        10000 // 10 second timeout
+      );
 
       console.log('📬 Lark API response:', {
         code: result.code,
