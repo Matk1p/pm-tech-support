@@ -567,10 +567,15 @@ app.post('/lark/events', async (req, res) => {
         
         // Try to send a fallback error message to the user
         try {
-          const chatId = event.context?.open_chat_id;
+          const chatId = event.context?.open_chat_id || event.open_chat_id;
           if (chatId) {
             console.log('🚨 Sending error fallback message to chat:', chatId);
-            await sendMessage(chatId, 'Sorry, I encountered an issue processing your request. Please try again or type your question directly.');
+            
+            // Clear any stuck user state
+            userInteractionState.delete(chatId);
+            
+            await sendMessage(chatId, 'Sorry, I encountered an issue processing your request. Please send me a new message and I\'ll help you! 🤖');
+            console.log('✅ Fallback message sent and user state cleared');
           }
         } catch (fallbackError) {
           console.error('❌ Even fallback message failed:', fallbackError.message);
@@ -4541,7 +4546,8 @@ async function sendSimplePageSelectionCard(chatId) {
     userInteractionState.set(chatId, {
       step: 'awaiting_page_selection',
       selectedPage: null,
-      awaiting: true
+      awaiting: true,
+      timestamp: Date.now()
     });
     
     console.log('✅ Simple page selection card sent and state set');
@@ -4636,7 +4642,8 @@ async function sendPageSelectionMessage(chatId) {
     userInteractionState.set(chatId, {
       step: 'awaiting_page_selection',
       selectedPage: null,
-      awaiting: true
+      awaiting: true,
+      timestamp: Date.now()
     });
     
     console.log('✅ Page selection message sent successfully');
@@ -4738,7 +4745,8 @@ async function sendPageFAQs(chatId, pageKey) {
     userInteractionState.set(chatId, {
       step: 'awaiting_faq_selection',
       selectedPage: pageKey,
-      awaiting: true
+      awaiting: true,
+      timestamp: Date.now()
     });
     
     console.log('✅ FAQ options sent successfully');
@@ -4771,7 +4779,8 @@ async function sendPageFAQs(chatId, pageKey) {
       userInteractionState.set(chatId, {
         step: 'text_faq_mode',
         selectedPage: pageKey,
-        awaiting: true
+        awaiting: true,
+        timestamp: Date.now()
       });
       
       console.log('✅ FAQ text fallback sent successfully');
@@ -4827,25 +4836,49 @@ async function sendInteractiveCard(chatId, cardContent) {
       console.log('🚀 About to call SDK...');
       
       // Add timeout and retry logic for network issues
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('SDK call timeout after 15 seconds')), 15000);
-      });
-      
       let messageData;
       let retryCount = 0;
       const maxRetries = 2;
       
       while (retryCount <= maxRetries) {
+        let timeoutId;
         try {
           console.log(`🔄 SDK call attempt ${retryCount + 1}/${maxRetries + 1}`);
-          messageData = await Promise.race([
-            larkClient.im.message.create(cardParams),
-            timeoutPromise
-          ]);
-          break; // Success, exit retry loop
+          
+          // Create a new timeout promise for each retry
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+              reject(new Error('SDK call timeout after 25 seconds'));
+            }, 25000);
+          });
+          
+          try {
+            messageData = await Promise.race([
+              larkClient.im.message.create(cardParams),
+              timeoutPromise
+            ]);
+            
+            // Clear timeout on success
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+            }
+            
+            break; // Success, exit retry loop
+          } catch (raceError) {
+            // Clear timeout on any error
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+            }
+            throw raceError;
+          }
         } catch (error) {
           retryCount++;
           console.log(`⚠️ SDK call attempt ${retryCount} failed:`, error.message);
+          
+          // Ensure timeout is cleared
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           
           if (retryCount > maxRetries) {
             throw error; // All retries exhausted
@@ -5144,7 +5177,12 @@ Here's some quick guidance for this topic. For more detailed step-by-step instru
         }
       } catch (error) {
         console.error('❌ Error going back to pages:', error.message);
-        await sendMessage(chatId, "Please let me know which page you need help with: Dashboard, Jobs, Candidates, Clients, Calendar, or Claims.");
+        // Always try to send fallback message
+        try {
+          await sendMessage(chatId, "Please let me know which page you need help with: Dashboard, Jobs, Candidates, Clients, Calendar, or Claims.");
+        } catch (fallbackError) {
+          console.error('❌ Even fallback message failed:', fallbackError.message);
+        }
       }
     } else if (actionValue === 'custom_question') {
       // Enable custom question mode
@@ -5160,7 +5198,23 @@ Here's some quick guidance for this topic. For more detailed step-by-step instru
     console.error('❌ Error handling card interaction:', error);
     console.error('❌ Error stack:', error.stack);
     console.error('❌ ============================================');
-    throw error; // Re-throw to be caught by webhook handler
+    
+    // Try to recover by clearing state and sending fallback message
+    try {
+      if (chatId) {
+        console.log('🚨 Attempting error recovery for chat:', chatId);
+        userInteractionState.delete(chatId);
+        
+        // Send recovery message if possible
+        await sendMessage(chatId, "I encountered an issue. Please send me a message and I'll help you again! 🤖");
+        console.log('✅ Error recovery message sent');
+      }
+    } catch (recoveryError) {
+      console.error('❌ Error recovery failed:', recoveryError.message);
+    }
+    
+    // Don't re-throw to prevent further issues
+    console.log('🔄 Continuing despite card interaction error to prevent system lockup');
   } finally {
     const duration = Date.now() - startTime;
     console.log('🏁 CARD INTERACTION COMPLETED in', duration, 'ms at', new Date().toISOString());
@@ -5177,6 +5231,56 @@ function isNewConversation(chatId) {
   
   return !hasContext && !hasInteractionState;
 }
+
+// Periodic cleanup to prevent memory leaks and stuck states
+function cleanupStuckStates() {
+  const CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 minutes
+  const STATE_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+  
+  setInterval(() => {
+    try {
+      console.log('🧹 Running periodic cleanup...');
+      const now = Date.now();
+      let cleanedCount = 0;
+      
+      // Clean up old user interaction states
+      for (const [chatId, state] of userInteractionState.entries()) {
+        if (state.timestamp && (now - state.timestamp) > STATE_TIMEOUT) {
+          userInteractionState.delete(chatId);
+          cleanedCount++;
+        }
+      }
+      
+      // Clean up old conversation contexts
+      for (const [chatId, context] of conversationContext.entries()) {
+        if (context.length === 0 || !context.some(msg => msg.timestamp && (now - msg.timestamp) < STATE_TIMEOUT)) {
+          conversationContext.delete(chatId);
+          cleanedCount++;
+        }
+      }
+      
+      // Clean up processed events older than 1 hour
+      const EVENT_TIMEOUT = 60 * 60 * 1000; // 1 hour
+      for (const eventId of processedEvents) {
+        // Event IDs contain timestamp, extract it
+        const eventTimestamp = parseInt(eventId.split('_')[1] || '0');
+        if (eventTimestamp && (now - eventTimestamp) > EVENT_TIMEOUT) {
+          processedEvents.delete(eventId);
+          cleanedCount++;
+        }
+      }
+      
+      if (cleanedCount > 0) {
+        console.log(`🧹 Cleaned up ${cleanedCount} stuck states and old data`);
+      }
+    } catch (error) {
+      console.error('❌ Error during cleanup:', error.message);
+    }
+  }, CLEANUP_INTERVAL);
+}
+
+// Start cleanup on server initialization
+cleanupStuckStates();
 
 // Debug endpoint to test card interactions
 app.post('/test-card-click', async (req, res) => {
