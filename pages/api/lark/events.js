@@ -649,6 +649,22 @@ async function sendMessageToLark(chatId, message) {
     hasLarkClient: !!larkClient
   });
 
+  // Quick token validation
+  try {
+    const tokenTest = await larkClient.auth.tenantAccessToken.internal({
+      data: {
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET
+      }
+    });
+    console.log('🔑 Token validation:', {
+      code: tokenTest.code,
+      hasToken: !!tokenTest.tenant_access_token
+    });
+  } catch (tokenError) {
+    console.error('❌ Token validation failed:', tokenError.message);
+  }
+
   while (retries > 0) {
     try {
       if (!larkClient) {
