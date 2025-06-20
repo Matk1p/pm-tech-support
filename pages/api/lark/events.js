@@ -3,11 +3,31 @@ import { Client } from '@larksuiteoapi/node-sdk';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize clients
+// Validate environment variables
+function validateEnvironment() {
+  const required = ['LARK_APP_ID', 'LARK_APP_SECRET', 'OPENAI_API_KEY', 'SUPABASE_URL', 'SUPABASE_ANON_KEY'];
+  const missing = required.filter(key => !process.env[key]);
+  
+  if (missing.length > 0) {
+    console.error('❌ Missing environment variables:', missing);
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+  
+  console.log('✅ Environment variables validated');
+  return true;
+}
+
+// Initialize clients with validation
+validateEnvironment();
+
 const larkClient = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
+  loggerLevel: 'info', // Add logging for debugging
+  disableTokenCache: false // Enable token caching
 });
+
+console.log('✅ Lark client initialized with App ID:', process.env.LARK_APP_ID?.slice(0, 8) + '...');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -163,13 +183,31 @@ Always provide specific, actionable steps when helping users.`;
 export default async function handler(req, res) {
   // Handle GET requests (for health checks and verification)
   if (req.method === 'GET') {
-    return res.status(200).json({ 
-      status: 'ok',
-      message: 'Lark webhook endpoint is active',
-      timestamp: new Date().toISOString(),
-      endpoint: '/api/lark/events',
-      methods: ['GET', 'POST']
-    });
+    try {
+      // Test Lark client initialization
+      const clientStatus = larkClient ? 'initialized' : 'not initialized';
+      
+      return res.status(200).json({ 
+        status: 'ok',
+        message: 'Lark webhook endpoint is active',
+        timestamp: new Date().toISOString(),
+        endpoint: '/api/lark/events',
+        methods: ['GET', 'POST'],
+        larkClient: clientStatus,
+        environment: {
+          hasAppId: !!process.env.LARK_APP_ID,
+          hasAppSecret: !!process.env.LARK_APP_SECRET,
+          hasOpenAI: !!process.env.OPENAI_API_KEY,
+          hasSupabase: !!process.env.SUPABASE_URL
+        }
+      });
+    } catch (error) {
+      return res.status(500).json({
+        status: 'error',
+        message: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 
   // Only handle POST requests for actual webhook events
@@ -745,6 +783,11 @@ async function sendMessageToLark(chatId, message) {
   
   while (retries > 0) {
     try {
+      // Ensure we have a valid client
+      if (!larkClient) {
+        throw new Error('Lark client not initialized');
+      }
+
       const result = await larkClient.im.message.create({
         params: { receive_id_type: 'chat_id' },
         data: {
@@ -755,47 +798,81 @@ async function sendMessageToLark(chatId, message) {
         }
       });
 
+      console.log('🔍 Lark API response:', { code: result.code, msg: result.msg });
+
       if (result.code === 0) {
+        console.log('✅ Message sent successfully');
         return result;
       } else {
-        throw new Error(`Lark API error: ${result.msg}`);
+        throw new Error(`Lark API error: ${result.code} - ${result.msg}`);
       }
 
     } catch (error) {
       retries--;
-      console.error(`❌ Send message error (${retries} retries left):`, error.message);
+      console.error(`❌ Send message error (${retries} retries left):`, {
+        message: error.message,
+        stack: error.stack?.split('\n')[0],
+        chatId: chatId
+      });
       
       if (retries === 0) {
+        console.error('❌ All message retries failed, giving up');
         throw error;
       }
       
-      // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait before retry with exponential backoff
+      await new Promise(resolve => setTimeout(resolve, 1000 * (4 - retries)));
     }
   }
 }
 
 // Send interactive card
 async function sendInteractiveCard(chatId, cardContent) {
-  try {
-    const result = await larkClient.im.message.create({
-      params: { receive_id_type: 'chat_id' },
-      data: {
-        receive_id: chatId,
-        msg_type: 'interactive',
-        content: JSON.stringify(cardContent),
-        uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  let retries = 3;
+  
+  while (retries > 0) {
+    try {
+      // Ensure we have a valid client
+      if (!larkClient) {
+        throw new Error('Lark client not initialized');
       }
-    });
 
-    if (result.code === 0) {
-      return result;
-    } else {
-      throw new Error(`Lark card error: ${result.msg}`);
+      console.log('🎯 Sending interactive card to:', chatId);
+
+      const result = await larkClient.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(cardContent),
+          uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        }
+      });
+
+      console.log('🔍 Card API response:', { code: result.code, msg: result.msg });
+
+      if (result.code === 0) {
+        console.log('✅ Interactive card sent successfully');
+        return result;
+      } else {
+        throw new Error(`Lark card error: ${result.code} - ${result.msg}`);
+      }
+    } catch (error) {
+      retries--;
+      console.error(`❌ Card sending error (${retries} retries left):`, {
+        message: error.message,
+        stack: error.stack?.split('\n')[0],
+        chatId: chatId
+      });
+      
+      if (retries === 0) {
+        console.error('❌ All card retries failed, giving up');
+        throw error;
+      }
+      
+      // Wait before retry with exponential backoff
+      await new Promise(resolve => setTimeout(resolve, 1000 * (4 - retries)));
     }
-  } catch (error) {
-    console.error('❌ Card sending error:', error);
-    throw error;
   }
 }
 
