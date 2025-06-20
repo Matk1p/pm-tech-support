@@ -657,12 +657,30 @@ async function sendMessageToLark(chatId, message) {
 
   console.log('[DEBUG] Proceeding directly to message sending...');
 
+  // Test if setTimeout works (basic Node.js environment check)
+  console.log('[DEBUG] Testing setTimeout functionality...');
+  await new Promise(resolve => {
+    setTimeout(() => {
+      console.log('[DEBUG] setTimeout test completed - event loop is working');
+      resolve();
+    }, 10);
+  });
+
+  // Basic Lark client health check
+  console.log('[DEBUG] Checking Lark client status:', {
+    clientExists: !!larkClient,
+    clientType: typeof larkClient,
+    hasImMethod: !!(larkClient?.im),
+    hasMessageMethod: !!(larkClient?.im?.message),
+    hasCreateMethod: !!(larkClient?.im?.message?.create)
+  });
+
+  if (!larkClient || !larkClient.im || !larkClient.im.message || !larkClient.im.message.create) {
+    throw new Error('Lark client not properly initialized or missing required methods');
+  }
+
   while (retries > 0) {
     try {
-      if (!larkClient) {
-        throw new Error('Lark client not initialized');
-      }
-
       const messageData = {
         receive_id: chatId,
         msg_type: 'text',
@@ -679,30 +697,26 @@ async function sendMessageToLark(chatId, message) {
 
       console.log('[DEBUG] Starting Promise.race with 5 second timeout...');
       
-      // Add timeout wrapper to prevent hanging
-      const callWithTimeout = (promise, timeoutMs) => {
-        return Promise.race([
-          promise,
-          new Promise((_, reject) => 
-            setTimeout(() => {
-              console.log('[DEBUG] API call timed out after', timeoutMs, 'ms');
-              reject(new Error('API call timeout'));
-            }, timeoutMs)
-          )
-        ]);
-      };
+      // Simplified timeout implementation
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          console.log('[DEBUG] Manual timeout triggered after 5 seconds');
+          reject(new Error('Manual timeout after 5 seconds'));
+        }, 5000);
+      });
 
-      console.log('[DEBUG] Starting Promise.race with 5 second timeout...');
+      const apiPromise = larkClient.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: messageData
+      });
+
+      console.log('[DEBUG] Starting Promise.race...');
       
       try {
-        const result = await callWithTimeout(
-          larkClient.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: messageData
-          }),
-          5000 // Reduced to 5 second timeout
-        );
-
+        const result = await Promise.race([apiPromise, timeoutPromise]);
+        clearTimeout(timeoutId);
+        
         console.log('[DEBUG] API call completed, processing result...');
         console.log('Lark API response:', {
           code: result.code,
@@ -738,13 +752,13 @@ async function sendMessageToLark(chatId, message) {
         };
         
         try {
-          const testResult = await callWithTimeout(
+          const testResult = await Promise.race([
             larkClient.im.message.create({
               params: { receive_id_type: 'chat_id' },
               data: simpleData
             }),
-            3000 // 3 second timeout for test
-          );
+            timeoutPromise
+          ]);
           
           console.log('[DEBUG] Test message succeeded:', testResult.code);
           throw new Error('Original message content may be too long or contain problematic characters');
