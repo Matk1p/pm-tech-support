@@ -907,37 +907,15 @@ async function sendMessageToLark(chatId, message) {
         uuid: messageData.uuid
       });
 
-      console.log('📤 Calling larkClient.im.message.create...');
+      console.log('📤 Calling larkClient.im.message.create (direct call)...');
       
-      // Create timeout promise with proper variable scoping
-      let timeoutId;
-      const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-          console.log('⏰ SDK call timed out after 5 seconds');
-          reject(new Error('Lark SDK call timeout after 5 seconds'));
-        }, 5000);
-      });
-      
-      // Create API call promise
-      const apiPromise = larkClient.im.message.create({
+      // Direct SDK call without timeout racing (like the working debug endpoint)
+      const result = await larkClient.im.message.create({
         params: { receive_id_type: 'chat_id' },
         data: messageData
-      }).then(result => {
-        // Clear timeout on success
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        return result;
-      }).catch(error => {
-        // Clear timeout on error
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        throw error;
       });
       
-      console.log('⏱️ Racing SDK call against timeout...');
-      const result = await Promise.race([apiPromise, timeoutPromise]);
+      console.log('📬 SDK call completed');
       
       console.log('📬 Received response from Lark SDK');
       console.log('🔍 Full Lark SDK response:', JSON.stringify(result, null, 2));
