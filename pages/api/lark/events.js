@@ -967,12 +967,25 @@ async function sendInteractiveCard(chatId, cardContent) {
         data: cardData
       });
 
-      console.log('🔍 Card API response:', { code: result.code, msg: result.msg });
+      console.log('🔍 Card API response:', { code: result.code, msg: result.msg, data: result.data });
 
       if (result.code === 0) {
         console.log('✅ Interactive card sent successfully');
+        console.log('📬 Card message ID:', result.data?.message_id);
         return result;
       } else {
+        console.error('❌ Card sending failed with Lark error:');
+        console.error('- Error Code:', result.code);
+        console.error('- Error Message:', result.msg);
+        console.error('- Error Data:', result.data);
+        
+        // Provide specific error solutions
+        if (result.code === 230002) {
+          console.error('🔧 SOLUTION: Bot not in chat. Add bot to the chat/conversation first.');
+          console.error('   Chat ID:', chatId);
+          console.error('   This means the bot needs to be added to this specific chat.');
+        }
+        
         throw new Error(`Lark card error: ${result.code} - ${result.msg}`);
       }
     } catch (error) {
@@ -1092,7 +1105,8 @@ async function sendPageSelectionMessage(chatId) {
     });
     
   } catch (cardError) {
-    console.error('❌ Card sending failed, sending text fallback:', cardError);
+    console.error('❌ Card sending failed, using text fallback:', cardError.message);
+    console.error('❌ Full card error:', cardError);
     
     // Send a text message as fallback
     const fallbackMessage = `👋 Welcome to PM-Next Support Bot! 🤖
@@ -1107,7 +1121,14 @@ Please let me know which page you need help with:
 
 Or ask me anything about PM-Next directly!`;
 
-    await sendMessageToLark(chatId, fallbackMessage);
+    try {
+      console.log('📤 Sending fallback text message...');
+      await sendMessageToLark(chatId, fallbackMessage);
+      console.log('✅ Fallback message sent successfully');
+    } catch (fallbackError) {
+      console.error('❌ Even fallback message failed:', fallbackError.message);
+      console.error('❌ Full fallback error:', fallbackError);
+    }
   }
 }
 
