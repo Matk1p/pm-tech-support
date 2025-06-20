@@ -885,15 +885,13 @@ async function sendMessageToLark(chatId, message) {
 
       console.log('📤 Calling larkClient.im.message.create...');
       
-      // Create timeout promise that properly rejects
+      // Create timeout promise with proper variable scoping
+      let timeoutId;
       const timeoutPromise = new Promise((_, reject) => {
-        const timeoutId = setTimeout(() => {
+        timeoutId = setTimeout(() => {
           console.log('⏰ SDK call timed out after 8 seconds');
           reject(new Error('Lark SDK call timeout after 8 seconds'));
         }, 8000);
-        
-        // Store timeout ID for potential cleanup
-        timeoutPromise.timeoutId = timeoutId;
       });
       
       // Create API call promise
@@ -902,14 +900,14 @@ async function sendMessageToLark(chatId, message) {
         data: messageData
       }).then(result => {
         // Clear timeout on success
-        if (timeoutPromise.timeoutId) {
-          clearTimeout(timeoutPromise.timeoutId);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
         }
         return result;
       }).catch(error => {
         // Clear timeout on error
-        if (timeoutPromise.timeoutId) {
-          clearTimeout(timeoutPromise.timeoutId);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
         }
         throw error;
       });

@@ -21,13 +21,13 @@ export default async function handler(req, res) {
 
     console.log('📤 Testing SDK call with timeout...');
     
-    // Create timeout promise
+    // Create timeout promise with proper variable scoping
+    let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
-      const timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         console.log('⏰ SDK test timed out after 6 seconds');
         reject(new Error('SDK test timeout'));
       }, 6000);
-      timeoutPromise.timeoutId = timeoutId;
     });
     
     // Create API call promise
@@ -35,13 +35,13 @@ export default async function handler(req, res) {
       params: { receive_id_type: 'chat_id' },
       data: messageData
     }).then(result => {
-      if (timeoutPromise.timeoutId) {
-        clearTimeout(timeoutPromise.timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
       return result;
     }).catch(error => {
-      if (timeoutPromise.timeoutId) {
-        clearTimeout(timeoutPromise.timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
       throw error;
     });
