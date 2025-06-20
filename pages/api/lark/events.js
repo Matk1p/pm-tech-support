@@ -672,16 +672,38 @@ async function sendMessageToLark(chatId, message) {
     
     // First, get the access token
     console.log('🔑 Getting access token...');
+    console.log('🔑 Using app_id:', process.env.LARK_APP_ID ? 'Set' : 'Missing');
+    console.log('🔑 Using app_secret:', process.env.LARK_APP_SECRET ? 'Set' : 'Missing');
+    
+    const tokenRequestBody = {
+      app_id: process.env.LARK_APP_ID,
+      app_secret: process.env.LARK_APP_SECRET
+    };
+    console.log('🔑 Token request body:', JSON.stringify(tokenRequestBody, null, 2));
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+    
     const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        app_id: process.env.LARK_APP_ID,
-        app_secret: process.env.LARK_APP_SECRET
-      })
+      body: JSON.stringify(tokenRequestBody),
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
+
+    console.log('🔑 Token response status:', tokenResponse.status);
+    console.log('🔑 Token response headers:', Object.fromEntries(tokenResponse.headers.entries()));
+    
+    if (!tokenResponse.ok) {
+      const errorText = await tokenResponse.text();
+      console.error('❌ Token request failed with status:', tokenResponse.status);
+      console.error('❌ Token error response:', errorText);
+      throw new Error(`Token request failed: ${tokenResponse.status} - ${errorText}`);
+    }
 
     const tokenData = await tokenResponse.json();
     console.log('🔑 Token response:', tokenData);
