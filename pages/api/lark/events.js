@@ -896,6 +896,18 @@ async function sendMessageToLark(chatId, message) {
         return result;
       } else {
         console.error('❌ Lark SDK returned error code:', result.code);
+        console.error('❌ Lark SDK error message:', result.msg);
+        console.error('❌ Lark SDK error data:', result.data);
+        
+        // Provide specific error solutions
+        if (result.code === 230002) {
+          console.error('🔧 SOLUTION: Bot not in chat. Add bot to the chat/conversation first.');
+        } else if (result.code === 99991663) {
+          console.error('🔧 SOLUTION: Invalid chat_id. Check if chat exists and bot has access.');
+        } else if (result.code === 99991661) {
+          console.error('🔧 SOLUTION: Invalid app credentials. Check LARK_APP_ID and LARK_APP_SECRET.');
+        }
+        
         throw new Error(`Lark SDK error: ${result.code} - ${result.msg}`);
       }
 
