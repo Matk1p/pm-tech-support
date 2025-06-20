@@ -35,7 +35,9 @@ function initializeClients() {
     larkClient = new Client({
       appId: process.env.LARK_APP_ID,
       appSecret: process.env.LARK_APP_SECRET,
-      loggerLevel: 'warn'
+      appType: 'self-built',
+      domain: 'larksuite', // Use 'larksuite' for global domain
+      loggerLevel: 'debug'
     });
     console.log('Lark client initialized');
   }
@@ -49,7 +51,12 @@ function initializeClients() {
   if (!supabase) {
     supabase = createClient(
       process.env.SUPABASE_URL,
-      process.env.SUPABASE_ANON_KEY
+      process.env.SUPABASE_ANON_KEY,
+      {
+        db: {
+          schema: 'support'
+        }
+      }
     );
   }
   
@@ -134,8 +141,6 @@ Common workflows:
 Always provide specific, actionable steps when helping users.`;
 
 export default async function handler(req, res) {
-  // Initialize clients for this request (NextJS serverless pattern)
-  const { larkClient: client, openai: openaiClient, supabase: supabaseClient } = initializeClients();
   
   // Handle GET requests (for health checks and verification)
   if (req.method === 'GET') {
@@ -221,7 +226,7 @@ export default async function handler(req, res) {
       setImmediate(async () => {
         try {
           console.log('Starting message processing for event:', eventId);
-          await processMessage(event, client, openaiClient, supabaseClient);
+          await processMessage(event);
           console.log('Message processing completed for event:', eventId);
         } catch (error) {
           console.error('Background message processing failed:', {
@@ -256,7 +261,7 @@ export default async function handler(req, res) {
 }
 
 // Process message in background
-async function processMessage(event, client, openaiClient, supabaseClient) {
+async function processMessage(event) {
   try {
     const chatId = event.message?.chat_id;
     const messageContent = event.message?.content;
@@ -298,24 +303,24 @@ async function processMessage(event, client, openaiClient, supabaseClient) {
     // Check if user is in ticket creation flow
     if (ticketCollectionState.has(chatId)) {
       console.log('🎫 Processing ticket flow');
-      const ticketResponse = await handleTicketCreationFlow(chatId, userMessage, ticketCollectionState.get(chatId), senderId, supabaseClient);
+              const ticketResponse = await handleTicketCreationFlow(chatId, userMessage, ticketCollectionState.get(chatId), senderId);
               if (ticketResponse) {
-          await sendMessageToLark(chatId, ticketResponse, client);
+          await sendMessageToLark(chatId, ticketResponse);
           return;
         }
       }
 
       // Generate AI response
       console.log('Generating AI response for:', userMessage);
-      const aiResponseData = await generateAIResponse(userMessage, chatId, senderId, openaiClient);
+      const aiResponseData = await generateAIResponse(userMessage, chatId, senderId);
       
       if (aiResponseData) {
         const aiResponse = typeof aiResponseData === 'string' ? aiResponseData : aiResponseData.response;
         
-        if (aiResponse) {
-          console.log('Sending response:', aiResponse.substring(0, 100) + '...');
-          await sendMessageToLark(chatId, aiResponse, client);
-          console.log('Response sent successfully');
+                  if (aiResponse) {
+            console.log('Sending response:', aiResponse.substring(0, 100) + '...');
+            await sendMessageToLark(chatId, aiResponse);
+            console.log('Response sent successfully');
         } else {
           console.log('No response content to send');
         }
@@ -328,7 +333,7 @@ async function processMessage(event, client, openaiClient, supabaseClient) {
       console.error('Full error stack:', error.stack);
       
       try {
-        await sendMessageToLark(event.message.chat_id, 'I encountered an issue processing your message. Please try again or contact support.', client);
+        await sendMessageToLark(event.message.chat_id, 'I encountered an issue processing your message. Please try again or contact support.');
       } catch (fallbackError) {
         console.error('Fallback message failed:', fallbackError);
       }
@@ -336,7 +341,7 @@ async function processMessage(event, client, openaiClient, supabaseClient) {
 }
 
 // Generate AI response with full logic
-async function generateAIResponse(userMessage, chatId, senderId = null, openaiClient) {
+async function generateAIResponse(userMessage, chatId, senderId = null) {
   try {
     // Check for greeting/restart patterns
     const greetingPatterns = [
@@ -395,7 +400,7 @@ Please tell me what you need help with, and I'll provide detailed guidance!`;
       }
     ];
 
-    const completion = await openaiClient.chat.completions.create({
+    const completion = await openai.chat.completions.create({
       model: selectedModel,
       messages: messages,
       max_tokens: 800,
@@ -544,7 +549,7 @@ Please describe the details, and I'll create a support ticket for you.`;
   }
 }
 
-async function handleTicketCreationFlow(chatId, userMessage, ticketState, senderId = null, supabaseClient) {
+async function handleTicketCreationFlow(chatId, userMessage, ticketState, senderId = null) {
   try {
     if (ticketState.step === 'awaiting_description') {
       // Create the ticket with collected information
@@ -559,7 +564,7 @@ async function handleTicketCreationFlow(chatId, userMessage, ticketState, sender
         created_at: new Date().toISOString()
       };
 
-      const { data, error } = await supabaseClient
+      const { data, error } = await supabase
         .from(SUPPORT_TICKETS_TABLE)
         .insert([ticketData])
         .select();
@@ -659,62 +664,93 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
   }
 }
 
-// Send text message to Lark - SIMPLIFIED VERSION
-async function sendMessageToLark(chatId, message, larkClient) {
-  console.log('SIMPLE: Attempting to send message to:', chatId?.substring(0, 10));
-  
-  // Quick environment check
-  console.log('SIMPLE: Env check:', {
-    hasAppId: !!process.env.LARK_APP_ID,
-    hasAppSecret: !!process.env.LARK_APP_SECRET,
-    appIdLength: process.env.LARK_APP_ID?.length || 0
-  });
-  
+// Send text message to Lark using direct API call (working approach from server.js)
+async function sendMessageToLark(chatId, message) {
   try {
-    if (!larkClient) {
-      console.log('SIMPLE: No Lark client');
-      return false;
-    }
-
-    console.log('SIMPLE: About to call Lark API...');
+    console.log('Sending message to chat:', chatId);
+    console.log('Message content:', message);
     
-    // Manual timeout to prevent infinite hanging
-    const apiCall = larkClient.im.message.create({
-      params: { receive_id_type: 'chat_id' },
-      data: {
-        receive_id: chatId,
-        msg_type: 'text',
-        content: JSON.stringify({ text: message }),
-        uuid: `simple_${Date.now()}`
-      }
+    // First, get the access token
+    const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET
+      })
     });
 
-    console.log('SIMPLE: API call initiated, waiting for response...');
-
-    const result = await Promise.race([
-      apiCall,
-      new Promise((_, reject) => 
-        setTimeout(() => {
-          console.log('SIMPLE: Timeout after 8 seconds');
-          reject(new Error('Timeout'));
-        }, 8000)
-      )
-    ]);
-
-    console.log('SIMPLE: Result code:', result?.code);
+    const tokenData = await tokenResponse.json();
     
-    if (result.code === 0) {
-      console.log('SIMPLE: Success');
-      return result;
-    } else {
-      console.log('SIMPLE: Failed with code:', result.code, result.msg);
-      return false;
+    if (tokenData.code !== 0) {
+      throw new Error(`Failed to get access token: ${tokenData.msg}`);
     }
+
+    const accessToken = tokenData.tenant_access_token;
+    console.log('Got access token successfully');
+
+    // Send the message
+    // Detect the ID type based on the chat ID format
+    let idType = 'chat_id';
+    if (chatId.startsWith('ou_')) {
+      idType = 'user_id';
+    } else if (chatId.startsWith('oc_')) {
+      idType = 'chat_id';
+    } else if (chatId.startsWith('og_')) {
+      idType = 'chat_id';
+    }
+
+    const messagePayload = {
+      receive_id_type: idType,
+      receive_id: chatId,
+      msg_type: 'text',
+      content: JSON.stringify({
+        text: message
+      }),
+      uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    };
+
+    console.log('Message payload:', JSON.stringify(messagePayload, null, 2));
+
+    const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${idType}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({
+          text: message
+        }),
+        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      })
+    });
+
+    const messageData = await messageResponse.json();
     
+    console.log('Lark API response status:', messageResponse.status);
+    console.log('Lark API response data:', JSON.stringify(messageData, null, 2));
+    
+    if (messageData.code !== 0) {
+      console.error('Lark API Error Details:', {
+        code: messageData.code,
+        msg: messageData.msg,
+        data: messageData.data,
+        error: messageData.error
+      });
+      throw new Error(`Failed to send message: ${messageData.msg || 'Unknown error'}`);
+    }
+
+    console.log('Message sent successfully:', messageData);
+    return messageData;
   } catch (error) {
-    console.log('SIMPLE: Error caught:', error.message);
-    console.log('SIMPLE: Error type:', error.constructor.name);
-    return false;
+    console.error('Error sending message to Lark:', error);
+    console.error('Error details:', error.message);
+    throw error;
   }
 }
 
