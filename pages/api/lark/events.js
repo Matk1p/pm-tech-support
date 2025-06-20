@@ -29,28 +29,28 @@ let supabase;
 // Initialize clients (NextJS-compatible lazy initialization)
 function initializeClients() {
   if (!larkClient) {
-    validateEnvironment();
-    
+validateEnvironment();
+
     console.log('Initializing Lark client...');
     larkClient = new Client({
-      appId: process.env.LARK_APP_ID,
-      appSecret: process.env.LARK_APP_SECRET,
+  appId: process.env.LARK_APP_ID,
+  appSecret: process.env.LARK_APP_SECRET,
       appType: 'self-built',
       domain: 'larksuite', // Use 'larksuite' for global domain
       loggerLevel: 'debug'
-    });
+});
     console.log('Lark client initialized');
   }
 
   if (!openai) {
     openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+  apiKey: process.env.OPENAI_API_KEY,
+});
   }
 
   if (!supabase) {
     supabase = createClient(
-      process.env.SUPABASE_URL,
+  process.env.SUPABASE_URL,
       process.env.SUPABASE_ANON_KEY,
       {
         db: {
@@ -165,7 +165,7 @@ export default async function handler(req, res) {
       });
     } catch (error) {
       console.error('Health check error:', error);
-      return res.status(500).json({ 
+      return res.status(500).json({
         status: 'error',
         message: 'Health check failed',
         error: error.message 
@@ -191,8 +191,8 @@ export default async function handler(req, res) {
 
     // Immediate response to prevent Lark timeout
     if (!res.headersSent) {
-      res.status(200).json({ 
-        success: true,
+    res.status(200).json({ 
+      success: true, 
         timestamp: new Date().toISOString(),
         processed: true
       });
@@ -201,9 +201,9 @@ export default async function handler(req, res) {
     // Check if we have required fields
     if (!header || !event) {
       console.log('❌ Missing header or event data:', { hasHeader: !!header, hasEvent: !!event });
-      return;
-    }
-
+        return;
+      }
+      
     console.log('📝 Event received:', {
       eventType: header?.event_type,
       eventId: header?.event_id,
@@ -273,7 +273,7 @@ async function processMessage(event) {
       senderId: senderId,
       messageType: event.message?.message_type
     });
-
+    
     if (!chatId || !messageContent) {
       console.log('❌ Missing required data:', { 
         hasChatId: !!chatId, 
@@ -299,45 +299,45 @@ async function processMessage(event) {
       console.log('⚠️ Empty message after extraction');
       return;
     }
-
+    
     // Check if user is in ticket creation flow
     if (ticketCollectionState.has(chatId)) {
       console.log('🎫 Processing ticket flow');
-              const ticketResponse = await handleTicketCreationFlow(chatId, userMessage, ticketCollectionState.get(chatId), senderId);
-              if (ticketResponse) {
-          await sendMessageToLark(chatId, ticketResponse);
-          return;
-        }
+      const ticketResponse = await handleTicketCreationFlow(chatId, userMessage, ticketCollectionState.get(chatId), senderId);
+      if (ticketResponse) {
+        await sendMessageToLark(chatId, ticketResponse);
+        return;
       }
+    }
 
-      // Generate AI response
+    // Generate AI response
       console.log('Generating AI response for:', userMessage);
-      const aiResponseData = await generateAIResponse(userMessage, chatId, senderId);
+    const aiResponseData = await generateAIResponse(userMessage, chatId, senderId);
+    
+    if (aiResponseData) {
+      const aiResponse = typeof aiResponseData === 'string' ? aiResponseData : aiResponseData.response;
       
-      if (aiResponseData) {
-        const aiResponse = typeof aiResponseData === 'string' ? aiResponseData : aiResponseData.response;
-        
-                  if (aiResponse) {
+      if (aiResponse) {
             console.log('Sending response:', aiResponse.substring(0, 100) + '...');
-            await sendMessageToLark(chatId, aiResponse);
+        await sendMessageToLark(chatId, aiResponse);
             console.log('Response sent successfully');
         } else {
           console.log('No response content to send');
-        }
+      }
       } else {
         console.log('No AI response generated');
-      }
+    }
 
-      } catch (error) {
+  } catch (error) {
       console.error('Message processing error:', error);
       console.error('Full error stack:', error.stack);
-      
-      try {
-        await sendMessageToLark(event.message.chat_id, 'I encountered an issue processing your message. Please try again or contact support.');
-      } catch (fallbackError) {
+    
+    try {
+      await sendMessageToLark(event.message.chat_id, 'I encountered an issue processing your message. Please try again or contact support.');
+    } catch (fallbackError) {
         console.error('Fallback message failed:', fallbackError);
-      }
     }
+  }
 }
 
 // Generate AI response with full logic
@@ -523,14 +523,14 @@ function categorizeIssue(message) {
 async function startTicketCreation(chatId, userMessage, category, senderId = null) {
   try {
     // Store initial ticket state
-    ticketCollectionState.set(chatId, {
+  ticketCollectionState.set(chatId, {
       step: 'awaiting_description',
-      category: category,
+    category: category,
       initialMessage: userMessage,
       senderId: senderId,
-      timestamp: Date.now()
-    });
-    
+    timestamp: Date.now()
+  });
+  
     return `I can see you're experiencing an issue. I'd like to create a support ticket to get you proper assistance.
 
 **Issue Category**: ${category}
@@ -553,29 +553,29 @@ async function handleTicketCreationFlow(chatId, userMessage, ticketState, sender
   try {
     if (ticketState.step === 'awaiting_description') {
       // Create the ticket with collected information
-      const ticketData = {
+  const ticketData = {
         user_id: senderId || 'unknown',
         category: ticketState.category,
         subject: `${ticketState.category} Issue`,
         description: `Initial Message: ${ticketState.initialMessage}\n\nAdditional Details: ${userMessage}`,
-        status: 'open',
-        priority: 'medium',
+    status: 'open',
+    priority: 'medium',
         chat_id: chatId,
-        created_at: new Date().toISOString()
-      };
-
-      const { data, error } = await supabase
-        .from(SUPPORT_TICKETS_TABLE)
-        .insert([ticketData])
-        .select();
-
+    created_at: new Date().toISOString()
+  };
+  
+    const { data, error } = await supabase
+      .from(SUPPORT_TICKETS_TABLE)
+      .insert([ticketData])
+      .select();
+    
       if (error) {
         console.error('❌ Error creating ticket:', error);
         ticketCollectionState.delete(chatId);
         return 'I encountered an error while creating your support ticket. Please contact our support team directly.';
       }
-
-      const ticketNumber = data[0].id;
+    
+    const ticketNumber = data[0].id;
       ticketCollectionState.delete(chatId);
       
       return `**Support Ticket Created Successfully!**
@@ -667,10 +667,11 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 // Send text message to Lark using direct API call (working approach from server.js)
 async function sendMessageToLark(chatId, message) {
   try {
-    console.log('Sending message to chat:', chatId);
-    console.log('Message content:', message);
+    console.log('🔄 Sending message to chat:', chatId);
+    console.log('📝 Message content:', message);
     
     // First, get the access token
+    console.log('🔑 Getting access token...');
     const tokenResponse = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
       method: 'POST',
       headers: {
@@ -683,15 +684,15 @@ async function sendMessageToLark(chatId, message) {
     });
 
     const tokenData = await tokenResponse.json();
+    console.log('🔑 Token response:', tokenData);
     
     if (tokenData.code !== 0) {
       throw new Error(`Failed to get access token: ${tokenData.msg}`);
     }
 
     const accessToken = tokenData.tenant_access_token;
-    console.log('Got access token successfully');
+    console.log('✅ Got access token successfully');
 
-    // Send the message
     // Detect the ID type based on the chat ID format
     let idType = 'chat_id';
     if (chatId.startsWith('ou_')) {
@@ -702,8 +703,10 @@ async function sendMessageToLark(chatId, message) {
       idType = 'chat_id';
     }
 
+    console.log('🎯 Detected ID type:', idType, 'for chat:', chatId);
+
+    // Create message payload
     const messagePayload = {
-      receive_id_type: idType,
       receive_id: chatId,
       msg_type: 'text',
       content: JSON.stringify({
@@ -712,7 +715,7 @@ async function sendMessageToLark(chatId, message) {
       uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     };
 
-    console.log('Message payload:', JSON.stringify(messagePayload, null, 2));
+    console.log('📤 Sending message with payload:', JSON.stringify(messagePayload, null, 2));
 
     const messageResponse = await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=${idType}`, {
       method: 'POST',
@@ -720,23 +723,16 @@ async function sendMessageToLark(chatId, message) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`
       },
-      body: JSON.stringify({
-        receive_id: chatId,
-        msg_type: 'text',
-        content: JSON.stringify({
-          text: message
-        }),
-        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      })
+      body: JSON.stringify(messagePayload)
     });
 
     const messageData = await messageResponse.json();
     
-    console.log('Lark API response status:', messageResponse.status);
-    console.log('Lark API response data:', JSON.stringify(messageData, null, 2));
+    console.log('📡 Lark API response status:', messageResponse.status);
+    console.log('📡 Lark API response data:', JSON.stringify(messageData, null, 2));
     
     if (messageData.code !== 0) {
-      console.error('Lark API Error Details:', {
+      console.error('❌ Lark API Error Details:', {
         code: messageData.code,
         msg: messageData.msg,
         data: messageData.data,
@@ -745,13 +741,13 @@ async function sendMessageToLark(chatId, message) {
       throw new Error(`Failed to send message: ${messageData.msg || 'Unknown error'}`);
     }
 
-    console.log('Message sent successfully:', messageData);
+    console.log('✅ Message sent successfully!');
     return messageData;
-  } catch (error) {
-    console.error('Error sending message to Lark:', error);
-    console.error('Error details:', error.message);
-    throw error;
-  }
+    } catch (error) {
+    console.error('❌ Error sending message to Lark:', error);
+    console.error('❌ Error details:', error.message);
+        throw error;
+      }
 }
 
 // Disable body parsing for larger payloads
