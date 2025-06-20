@@ -146,7 +146,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     try {
       // Test Lark client initialization
-      const clientStatus = client ? 'initialized' : 'not initialized';
+      const clientStatus = larkClient ? 'initialized' : 'not initialized';
       
       return res.status(200).json({ 
         status: 'ok',
