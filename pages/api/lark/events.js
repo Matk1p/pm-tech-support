@@ -851,7 +851,41 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
          `I can help with ${faqQuestion}. Please provide more specific details about what you're trying to do, and I'll give you step-by-step guidance.`;
 }
 
-// Send message to Lark with retry logic
+// Get access token for Lark API
+async function getLarkAccessToken() {
+  try {
+    console.log('🔑 Getting Lark access token...');
+    
+    const response = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Token request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const tokenData = await response.json();
+    console.log('🔑 Token response:', { code: tokenData.code, expire: tokenData.expire });
+    
+    if (tokenData.code === 0) {
+      return tokenData.tenant_access_token;
+    } else {
+      throw new Error(`Token error: ${tokenData.code} - ${tokenData.msg}`);
+    }
+  } catch (error) {
+    console.error('❌ Failed to get access token:', error);
+    throw error;
+  }
+}
+
+// Send message to Lark with direct HTTP (bypassing SDK)
 async function sendMessageToLark(chatId, message) {
   console.log('🚀 sendMessageToLark called with:', { chatId, messageLength: message?.length });
   
@@ -861,12 +895,9 @@ async function sendMessageToLark(chatId, message) {
     try {
       console.log(`🔄 Attempt ${4 - retries}/3 to send message`);
       
-      // Ensure we have a valid client
-      if (!larkClient) {
-        console.error('❌ Lark client not initialized');
-        throw new Error('Lark client not initialized');
-      }
-      console.log('✅ Lark client is available');
+      // Get access token first
+      const accessToken = await getLarkAccessToken();
+      console.log('✅ Got access token');
 
       const messageData = {
         receive_id: chatId,
@@ -882,26 +913,34 @@ async function sendMessageToLark(chatId, message) {
         uuid: messageData.uuid
       });
 
-      console.log('📤 Calling larkClient.im.message.create...');
+      console.log('📤 Making direct HTTP call to Lark API...');
       
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Lark API call timeout after 15 seconds')), 15000);
+      // Use direct fetch with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      const response = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(messageData),
+        signal: controller.signal
       });
       
-      const apiPromise = larkClient.im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: messageData
-      });
-      
-      console.log('⏱️ Racing API call against timeout...');
-      const result = await Promise.race([apiPromise, timeoutPromise]);
-      
-      console.log('📬 Received response from Lark API');
+      clearTimeout(timeoutId);
+      console.log('📬 Received HTTP response from Lark API');
+
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
       console.log('🔍 Full Lark API response:', JSON.stringify(result, null, 2));
 
       if (result.code === 0) {
-        console.log('✅ Message sent successfully to Lark');
+        console.log('✅ Message sent successfully to Lark via HTTP');
         return result;
       } else {
         console.error('❌ Lark API returned error code:', result.code);
@@ -913,6 +952,7 @@ async function sendMessageToLark(chatId, message) {
       console.error(`❌ Send message error (${retries} retries left):`, {
         message: error.message,
         name: error.name,
+        isAbortError: error.name === 'AbortError',
         stack: error.stack?.split('\n').slice(0, 3),
         chatId: chatId
       });
