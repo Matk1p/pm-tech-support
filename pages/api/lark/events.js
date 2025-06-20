@@ -677,45 +677,81 @@ async function sendMessageToLark(chatId, message) {
         contentPreview: messageData.content.substring(0, 100) + '...'
       });
 
+      console.log('[DEBUG] Starting Promise.race with 5 second timeout...');
+      
       // Add timeout wrapper to prevent hanging
       const callWithTimeout = (promise, timeoutMs) => {
         return Promise.race([
           promise,
           new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('API call timeout')), timeoutMs)
+            setTimeout(() => {
+              console.log('[DEBUG] API call timed out after', timeoutMs, 'ms');
+              reject(new Error('API call timeout'));
+            }, timeoutMs)
           )
         ]);
       };
 
-      const result = await callWithTimeout(
-        larkClient.im.message.create({
-          params: { receive_id_type: 'chat_id' },
-          data: messageData
-        }),
-        10000 // 10 second timeout
-      );
+      console.log('[DEBUG] Starting Promise.race with 5 second timeout...');
+      
+      try {
+        const result = await callWithTimeout(
+          larkClient.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: messageData
+          }),
+          5000 // Reduced to 5 second timeout
+        );
 
-      console.log('Lark API response:', {
-        code: result.code,
-        msg: result.msg,
-        messageId: result.data?.message_id
-      });
+        console.log('[DEBUG] API call completed, processing result...');
+        console.log('Lark API response:', {
+          code: result.code,
+          msg: result.msg,
+          messageId: result.data?.message_id
+        });
 
-      if (result.code === 0) {
-        console.log('Message sent successfully to Lark');
-        return result;
-      } else {
-        console.error('Message sending failed with Lark error:');
-        console.error('- Error Code:', result.code);
-        console.error('- Error Message:', result.msg);
-        console.error('- Error Data:', result.data);
-        
-        if (result.code === 230002) {
-          console.error('SOLUTION: Bot not in chat. Add bot to the chat/conversation first.');
-          console.error('   Chat ID:', chatId);
+        if (result.code === 0) {
+          console.log('Message sent successfully to Lark');
+          return result;
+        } else {
+          console.error('Message sending failed with Lark error:');
+          console.error('- Error Code:', result.code);
+          console.error('- Error Message:', result.msg);
+          console.error('- Error Data:', result.data);
+          
+          if (result.code === 230002) {
+            console.error('SOLUTION: Bot not in chat. Add bot to the chat/conversation first.');
+            console.error('   Chat ID:', chatId);
+          }
+          
+          throw new Error(`Lark API error: ${result.code} - ${result.msg}`);
         }
+      } catch (timeoutError) {
+        console.log('[DEBUG] Main API call failed, trying simple test message...');
         
-        throw new Error(`Lark API error: ${result.code} - ${result.msg}`);
+        // Try sending a simple test message
+        const simpleData = {
+          receive_id: chatId,
+          msg_type: 'text',
+          content: JSON.stringify({ text: 'Test message' }),
+          uuid: `test_${Date.now()}`
+        };
+        
+        try {
+          const testResult = await callWithTimeout(
+            larkClient.im.message.create({
+              params: { receive_id_type: 'chat_id' },
+              data: simpleData
+            }),
+            3000 // 3 second timeout for test
+          );
+          
+          console.log('[DEBUG] Test message succeeded:', testResult.code);
+          throw new Error('Original message content may be too long or contain problematic characters');
+        } catch (testError) {
+          console.log('[DEBUG] Test message also failed:', testError.message);
+          throw timeoutError;
+        }
       }
     } catch (error) {
       retries--;
