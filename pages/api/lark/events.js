@@ -265,8 +265,20 @@ export default async function handler(req, res) {
       
       processedEvents.add(eventId);
       
-      // Process in background
-      setImmediate(() => processMessage(event));
+      // Process in background with proper error handling
+      setImmediate(async () => {
+        try {
+          console.log('🔄 Background processing started');
+          await processMessage(event);
+          console.log('✅ Background processing completed');
+        } catch (error) {
+          console.error('❌ Background processing failed:', {
+            message: error.message,
+            name: error.name,
+            stack: error.stack?.split('\n').slice(0, 5)
+          });
+        }
+      });
     }
     
     // Handle card interactions
@@ -281,8 +293,20 @@ export default async function handler(req, res) {
       
       processedEvents.add(eventId);
       
-      // Process in background
-      setImmediate(() => processCardInteraction(event));
+      // Process in background with proper error handling
+      setImmediate(async () => {
+        try {
+          console.log('🔄 Background card processing started');
+          await processCardInteraction(event);
+          console.log('✅ Background card processing completed');
+        } catch (error) {
+          console.error('❌ Background card processing failed:', {
+            message: error.message,
+            name: error.name,
+            stack: error.stack?.split('\n').slice(0, 5)
+          });
+        }
+      });
     }
 
       } catch (error) {
@@ -889,9 +913,9 @@ async function sendMessageToLark(chatId, message) {
       let timeoutId;
       const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
-          console.log('⏰ SDK call timed out after 8 seconds');
-          reject(new Error('Lark SDK call timeout after 8 seconds'));
-        }, 8000);
+          console.log('⏰ SDK call timed out after 5 seconds');
+          reject(new Error('Lark SDK call timeout after 5 seconds'));
+        }, 5000);
       });
       
       // Create API call promise
