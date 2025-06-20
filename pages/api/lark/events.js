@@ -639,150 +639,39 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
   }
 }
 
-// Send text message to Lark
+// Send text message to Lark - SIMPLIFIED VERSION
 async function sendMessageToLark(chatId, message) {
-  console.log('[DEBUG] sendMessageToLark function called:', {
-    chatId: chatId?.substring(0, 10) + '...',
-    messageLength: message?.length,
-    timestamp: new Date().toISOString()
-  });
-
-  let retries = 3;
+  console.log('SIMPLE: Attempting to send message to:', chatId?.substring(0, 10));
   
-  console.log('Attempting to send message:', {
-    chatId: chatId,
-    messageLength: message?.length,
-    hasLarkClient: !!larkClient
-  });
+  try {
+    if (!larkClient) {
+      console.log('SIMPLE: No Lark client');
+      return false;
+    }
 
-  console.log('[DEBUG] Proceeding directly to message sending...');
-
-  // Test if setTimeout works (basic Node.js environment check)
-  console.log('[DEBUG] Testing setTimeout functionality...');
-  await new Promise(resolve => {
-    setTimeout(() => {
-      console.log('[DEBUG] setTimeout test completed - event loop is working');
-      resolve();
-    }, 10);
-  });
-
-  // Basic Lark client health check
-  console.log('[DEBUG] Checking Lark client status:', {
-    clientExists: !!larkClient,
-    clientType: typeof larkClient,
-    hasImMethod: !!(larkClient?.im),
-    hasMessageMethod: !!(larkClient?.im?.message),
-    hasCreateMethod: !!(larkClient?.im?.message?.create)
-  });
-
-  if (!larkClient || !larkClient.im || !larkClient.im.message || !larkClient.im.message.create) {
-    throw new Error('Lark client not properly initialized or missing required methods');
-  }
-
-  while (retries > 0) {
-    try {
-      const messageData = {
+    const result = await larkClient.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
         receive_id: chatId,
         msg_type: 'text',
         content: JSON.stringify({ text: message }),
-        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      };
-
-      console.log('Calling Lark API with:', {
-        receive_id: messageData.receive_id,
-        msg_type: messageData.msg_type,
-        uuid: messageData.uuid,
-        contentPreview: messageData.content.substring(0, 100) + '...'
-      });
-
-      console.log('[DEBUG] Starting Promise.race with 5 second timeout...');
-      
-      // Simplified timeout implementation
-      let timeoutId;
-      const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-          console.log('[DEBUG] Manual timeout triggered after 5 seconds');
-          reject(new Error('Manual timeout after 5 seconds'));
-        }, 5000);
-      });
-
-      const apiPromise = larkClient.im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: messageData
-      });
-
-      console.log('[DEBUG] Starting Promise.race...');
-      
-      try {
-        const result = await Promise.race([apiPromise, timeoutPromise]);
-        clearTimeout(timeoutId);
-        
-        console.log('[DEBUG] API call completed, processing result...');
-        console.log('Lark API response:', {
-          code: result.code,
-          msg: result.msg,
-          messageId: result.data?.message_id
-        });
-
-        if (result.code === 0) {
-          console.log('Message sent successfully to Lark');
-          return result;
-        } else {
-          console.error('Message sending failed with Lark error:');
-          console.error('- Error Code:', result.code);
-          console.error('- Error Message:', result.msg);
-          console.error('- Error Data:', result.data);
-          
-          if (result.code === 230002) {
-            console.error('SOLUTION: Bot not in chat. Add bot to the chat/conversation first.');
-            console.error('   Chat ID:', chatId);
-          }
-          
-          throw new Error(`Lark API error: ${result.code} - ${result.msg}`);
-        }
-      } catch (timeoutError) {
-        console.log('[DEBUG] Main API call failed, trying simple test message...');
-        
-        // Try sending a simple test message
-        const simpleData = {
-          receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({ text: 'Test message' }),
-          uuid: `test_${Date.now()}`
-        };
-        
-        try {
-          const testResult = await Promise.race([
-            larkClient.im.message.create({
-              params: { receive_id_type: 'chat_id' },
-              data: simpleData
-            }),
-            timeoutPromise
-          ]);
-          
-          console.log('[DEBUG] Test message succeeded:', testResult.code);
-          throw new Error('Original message content may be too long or contain problematic characters');
-        } catch (testError) {
-          console.log('[DEBUG] Test message also failed:', testError.message);
-          throw timeoutError;
-        }
+        uuid: `simple_${Date.now()}`
       }
-    } catch (error) {
-      retries--;
-      console.error(`Message sending error (${retries} retries left):`, {
-        message: error.message,
-        chatId: chatId,
-        errorType: error.constructor.name
-      });
-      
-      if (retries === 0) {
-        console.error('All message retries failed, giving up');
-        throw error;
-      }
-      
-      // Wait before retry with exponential backoff
-      await new Promise(resolve => setTimeout(resolve, 1000 * (4 - retries)));
+    });
+
+    console.log('SIMPLE: Result code:', result?.code);
+    
+    if (result.code === 0) {
+      console.log('SIMPLE: Success');
+      return result;
+    } else {
+      console.log('SIMPLE: Failed with code:', result.code, result.msg);
+      return false;
     }
+    
+  } catch (error) {
+    console.log('SIMPLE: Error:', error.message);
+    return false;
   }
 }
 
