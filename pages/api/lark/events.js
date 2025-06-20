@@ -641,6 +641,12 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 
 // Send text message to Lark
 async function sendMessageToLark(chatId, message) {
+  console.log('🚨 [DEBUG] sendMessageToLark function called:', {
+    chatId: chatId?.substring(0, 10) + '...',
+    messageLength: message?.length,
+    timestamp: new Date().toISOString()
+  });
+
   let retries = 3;
   
   console.log('📤 Attempting to send message:', {
@@ -649,21 +655,28 @@ async function sendMessageToLark(chatId, message) {
     hasLarkClient: !!larkClient
   });
 
-  // Quick token validation
+  // Quick token validation (non-blocking)
+  console.log('🚨 [DEBUG] Starting token validation...');
   try {
-    const tokenTest = await larkClient.auth.tenantAccessToken.internal({
-      data: {
-        app_id: process.env.LARK_APP_ID,
-        app_secret: process.env.LARK_APP_SECRET
-      }
-    });
+    const tokenTest = await Promise.race([
+      larkClient.auth.tenantAccessToken.internal({
+        data: {
+          app_id: process.env.LARK_APP_ID,
+          app_secret: process.env.LARK_APP_SECRET
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Token validation timeout')), 5000))
+    ]);
+    
     console.log('🔑 Token validation:', {
       code: tokenTest.code,
       hasToken: !!tokenTest.tenant_access_token
     });
   } catch (tokenError) {
-    console.error('❌ Token validation failed:', tokenError.message);
+    console.error('❌ Token validation failed (continuing anyway):', tokenError.message);
   }
+  
+  console.log('🚨 [DEBUG] Proceeding to message sending...');
 
   while (retries > 0) {
     try {
