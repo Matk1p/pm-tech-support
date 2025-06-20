@@ -500,11 +500,24 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       // First, try sending a simple test message to verify basic connectivity
       try {
         console.log('🧪 Testing basic message sending...');
-        await sendMessageToLark(chatId, 'Hello! I received your greeting. Let me send you the menu...');
-        console.log('✅ Basic message test successful');
+        console.log('🧪 About to call sendMessageToLark with chatId:', chatId);
+        
+        const testResult = await sendMessageToLark(chatId, 'Hello! I received your greeting. Let me send you the menu...');
+        
+        console.log('✅ Basic message test successful, result:', testResult);
       } catch (testError) {
-        console.error('❌ Basic message test failed:', testError);
-        return 'I\'m having trouble connecting to Lark. Please contact support.';
+        console.error('❌ Basic message test failed with error:', {
+          message: testError.message,
+          name: testError.name,
+          stack: testError.stack,
+          fullError: testError
+        });
+        
+        // Try to send a simpler fallback response
+        return {
+          response: 'I\'m having trouble connecting to Lark. Please try again or contact support.',
+          responseType: 'error_fallback'
+        };
       }
       
       try {
@@ -840,31 +853,58 @@ async function getFastFAQAnswer(pageKey, faqQuestion) {
 
 // Send message to Lark with retry logic
 async function sendMessageToLark(chatId, message) {
+  console.log('🚀 sendMessageToLark called with:', { chatId, messageLength: message?.length });
+  
   let retries = 3;
   
   while (retries > 0) {
     try {
+      console.log(`🔄 Attempt ${4 - retries}/3 to send message`);
+      
       // Ensure we have a valid client
       if (!larkClient) {
+        console.error('❌ Lark client not initialized');
         throw new Error('Lark client not initialized');
       }
+      console.log('✅ Lark client is available');
 
-      const result = await larkClient.im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: {
-          receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({ text: message }),
-          uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        }
+      const messageData = {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text: message }),
+        uuid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      };
+      
+      console.log('🔍 Sending message with data:', {
+        receive_id: messageData.receive_id,
+        msg_type: messageData.msg_type,
+        content: messageData.content,
+        uuid: messageData.uuid
       });
 
-      console.log('🔍 Lark API response:', { code: result.code, msg: result.msg });
+      console.log('📤 Calling larkClient.im.message.create...');
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Lark API call timeout after 15 seconds')), 15000);
+      });
+      
+      const apiPromise = larkClient.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: messageData
+      });
+      
+      console.log('⏱️ Racing API call against timeout...');
+      const result = await Promise.race([apiPromise, timeoutPromise]);
+      
+      console.log('📬 Received response from Lark API');
+      console.log('🔍 Full Lark API response:', JSON.stringify(result, null, 2));
 
       if (result.code === 0) {
-        console.log('✅ Message sent successfully');
+        console.log('✅ Message sent successfully to Lark');
         return result;
       } else {
+        console.error('❌ Lark API returned error code:', result.code);
         throw new Error(`Lark API error: ${result.code} - ${result.msg}`);
       }
 
@@ -872,7 +912,8 @@ async function sendMessageToLark(chatId, message) {
       retries--;
       console.error(`❌ Send message error (${retries} retries left):`, {
         message: error.message,
-        stack: error.stack?.split('\n')[0],
+        name: error.name,
+        stack: error.stack?.split('\n').slice(0, 3),
         chatId: chatId
       });
       
@@ -881,6 +922,7 @@ async function sendMessageToLark(chatId, message) {
         throw error;
       }
       
+      console.log(`⏳ Waiting before retry ${4 - retries}...`);
       // Wait before retry with exponential backoff
       await new Promise(resolve => setTimeout(resolve, 1000 * (4 - retries)));
     }
