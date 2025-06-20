@@ -457,6 +457,16 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       
       userInteractionState.delete(chatId);
       
+      // First, try sending a simple test message to verify basic connectivity
+      try {
+        console.log('🧪 Testing basic message sending...');
+        await sendMessageToLark(chatId, 'Hello! I received your greeting. Let me send you the menu...');
+        console.log('✅ Basic message test successful');
+      } catch (testError) {
+        console.error('❌ Basic message test failed:', testError);
+        return 'I\'m having trouble connecting to Lark. Please contact support.';
+      }
+      
       try {
         await sendPageSelectionMessage(chatId);
         return {
@@ -465,18 +475,29 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
           interactiveCard: true
         };
       } catch (cardError) {
-        console.error('❌ Card sending failed:', cardError);
-        return `👋 Welcome to PM-Next Support Bot! 🤖
+        console.error('❌ Card sending failed, sending text fallback:', cardError);
+        
+        // Send a text message as fallback
+        const fallbackMessage = `👋 Welcome to PM-Next Support Bot! 🤖
 
 Please let me know which page you need help with:
-📊 Dashboard
-💼 Jobs  
-👥 Candidates
-🏢 Clients
-📅 Calendar
-💰 Claims
+📊 Dashboard - overview and analytics  
+💼 Jobs - job posting and management
+👥 Candidates - candidate profiles and management
+🏢 Clients - client and company management
+📅 Calendar - interview scheduling and calendar management
+💰 Claims - billing and financial tracking
 
 Or ask me anything about PM-Next directly!`;
+
+        try {
+          await sendMessageToLark(chatId, fallbackMessage);
+          console.log('✅ Fallback text message sent successfully');
+        } catch (fallbackError) {
+          console.error('❌ Even fallback message failed:', fallbackError);
+        }
+
+        return fallbackMessage;
       }
     }
 
@@ -838,15 +859,26 @@ async function sendInteractiveCard(chatId, cardContent) {
       }
 
       console.log('🎯 Sending interactive card to:', chatId);
+      console.log('🔍 Card content preview:', JSON.stringify(cardContent).substring(0, 200) + '...');
+
+      const cardData = {
+        receive_id: chatId,
+        msg_type: 'interactive',
+        content: JSON.stringify(cardContent),
+        uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      };
+
+      console.log('🔍 Full request data:', {
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          ...cardData,
+          content: cardData.content.substring(0, 100) + '...' // Truncate for logging
+        }
+      });
 
       const result = await larkClient.im.message.create({
         params: { receive_id_type: 'chat_id' },
-        data: {
-          receive_id: chatId,
-          msg_type: 'interactive',
-          content: JSON.stringify(cardContent),
-          uuid: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        }
+        data: cardData
       });
 
       console.log('🔍 Card API response:', { code: result.code, msg: result.msg });
@@ -878,18 +910,16 @@ async function sendInteractiveCard(chatId, cardContent) {
 
 // Send page selection message
 async function sendPageSelectionMessage(chatId) {
-  const cardContent = {
-    "config": {
-      "wide_screen_mode": true
-    },
-    "header": {
-      "template": "blue",
-      "title": {
-        "content": "🤖 Welcome to PM-Next Support Bot",
-        "tag": "plain_text"
-      }
-    },
+  // Start with a very simple card to test
+  const simpleCardContent = {
     "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "content": "🤖 Welcome to PM-Next Support Bot",
+          "tag": "plain_text"
+        }
+      },
       {
         "tag": "div",
         "text": {
@@ -898,46 +928,33 @@ async function sendPageSelectionMessage(chatId) {
         }
       },
       {
-        "tag": "hr"
-      },
-      {
         "tag": "action",
-        "actions": Object.keys(MAIN_PAGES).slice(0, 3).map(pageKey => ({
-          "tag": "button",
-          "text": {
-            "content": MAIN_PAGES[pageKey].name,
-            "tag": "plain_text"
+        "actions": [
+          {
+            "tag": "button",
+            "text": {
+              "content": "📊 Dashboard",
+              "tag": "plain_text"
+            },
+            "type": "primary",
+            "value": "dashboard"
           },
-          "type": "primary",
-          "value": pageKey
-        }))
-      },
-      {
-        "tag": "action",
-        "actions": Object.keys(MAIN_PAGES).slice(3, 6).map(pageKey => ({
-          "tag": "button",
-          "text": {
-            "content": MAIN_PAGES[pageKey].name,
-            "tag": "plain_text"
-          },
-          "type": "primary",
-          "value": pageKey
-        }))
-      },
-      {
-        "tag": "hr"
-      },
-      {
-        "tag": "div",
-        "text": {
-          "content": "Or you can ask me anything directly about PM-Next!",
-          "tag": "plain_text"
-        }
+          {
+            "tag": "button",
+            "text": {
+              "content": "💼 Jobs",
+              "tag": "plain_text"
+            },
+            "type": "primary", 
+            "value": "jobs"
+          }
+        ]
       }
     ]
   };
 
-  await sendInteractiveCard(chatId, cardContent);
+  console.log('🔍 Sending simplified card for testing...');
+  await sendInteractiveCard(chatId, simpleCardContent);
   
   userInteractionState.set(chatId, {
     step: 'awaiting_page_selection',
