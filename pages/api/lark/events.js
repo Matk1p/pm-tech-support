@@ -1,4 +1,9 @@
 // Next.js API Route for Lark Webhooks - Complete Bot Implementation
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
 import { Client } from '@larksuiteoapi/node-sdk';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
@@ -520,29 +525,6 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
       
       userInteractionState.delete(chatId);
       
-      // First, try sending a simple test message to verify basic connectivity
-      try {
-        console.log('🧪 Testing basic message sending...');
-        console.log('🧪 About to call sendMessageToLark with chatId:', chatId);
-        
-        const testResult = await sendMessageToLark(chatId, 'Hello! I received your greeting. Let me send you the menu...');
-        
-        console.log('✅ Basic message test successful, result:', testResult);
-      } catch (testError) {
-        console.error('❌ Basic message test failed with error:', {
-          message: testError.message,
-          name: testError.name,
-          stack: testError.stack,
-          fullError: testError
-        });
-        
-        // Try to send a simpler fallback response
-        return {
-          response: 'I\'m having trouble connecting to Lark. Please try again or contact support.',
-          responseType: 'error_fallback'
-        };
-      }
-      
       try {
         await sendPageSelectionMessage(chatId);
         return {
@@ -551,10 +533,10 @@ async function generateAIResponse(userMessage, chatId, senderId = null) {
           interactiveCard: true
         };
       } catch (cardError) {
-        console.error('❌ Card sending failed, sending text fallback:', cardError);
+        console.error('❌ Card sending failed, using text fallback:', cardError);
         
-        // Send a text message as fallback
-        const fallbackMessage = `👋 Welcome to PM-Next Support Bot! 🤖
+        // Return text fallback instead of trying to send another message
+        return `👋 Welcome to PM-Next Support Bot! 🤖
 
 Please let me know which page you need help with:
 📊 Dashboard - overview and analytics  
@@ -565,15 +547,6 @@ Please let me know which page you need help with:
 💰 Claims - billing and financial tracking
 
 Or ask me anything about PM-Next directly!`;
-
-        try {
-          await sendMessageToLark(chatId, fallbackMessage);
-          console.log('✅ Fallback text message sent successfully');
-        } catch (fallbackError) {
-          console.error('❌ Even fallback message failed:', fallbackError);
-        }
-
-        return fallbackMessage;
       }
     }
 
@@ -1011,58 +984,119 @@ async function sendInteractiveCard(chatId, cardContent) {
 
 // Send page selection message
 async function sendPageSelectionMessage(chatId) {
-  // Start with a very simple card to test
-  const simpleCardContent = {
-    "elements": [
-      {
-        "tag": "div",
-        "text": {
-          "content": "🤖 Welcome to PM-Next Support Bot",
-          "tag": "plain_text"
-        }
-      },
-      {
-        "tag": "div",
-        "text": {
-          "content": "Please select the page you need help with:",
-          "tag": "plain_text"
-        }
-      },
-      {
-        "tag": "action",
-        "actions": [
-          {
-            "tag": "button",
-            "text": {
-              "content": "📊 Dashboard",
-              "tag": "plain_text"
-            },
-            "type": "primary",
-            "value": "dashboard"
-          },
-          {
-            "tag": "button",
-            "text": {
-              "content": "💼 Jobs",
-              "tag": "plain_text"
-            },
-            "type": "primary", 
-            "value": "jobs"
+  try {
+    // Complete card with all pages
+    const pageSelectionCard = {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "🤖 Welcome to PM-Next Support Bot",
+            "tag": "plain_text"
           }
-        ]
-      }
-    ]
-  };
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "Please select the page you need help with:",
+            "tag": "plain_text"
+          }
+        },
+        {
+          "tag": "action",
+          "actions": [
+            {
+              "tag": "button",
+              "text": {
+                "content": "📊 Dashboard",
+                "tag": "plain_text"
+              },
+              "type": "default",
+              "value": "dashboard"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "💼 Jobs",
+                "tag": "plain_text"
+              },
+              "type": "default", 
+              "value": "jobs"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "👥 Candidates",
+                "tag": "plain_text"
+              },
+              "type": "default",
+              "value": "candidates"
+            }
+          ]
+        },
+        {
+          "tag": "action",
+          "actions": [
+            {
+              "tag": "button",
+              "text": {
+                "content": "🏢 Clients",
+                "tag": "plain_text"
+              },
+              "type": "default",
+              "value": "clients"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "📅 Calendar",
+                "tag": "plain_text"
+              },
+              "type": "default",
+              "value": "calendar"
+            },
+            {
+              "tag": "button",
+              "text": {
+                "content": "💰 Claims",
+                "tag": "plain_text"
+              },
+              "type": "default",
+              "value": "claims"
+            }
+          ]
+        }
+      ]
+    };
 
-  console.log('🔍 Sending simplified card for testing...');
-  await sendInteractiveCard(chatId, simpleCardContent);
-  
-  userInteractionState.set(chatId, {
-    step: 'awaiting_page_selection',
-    selectedPage: null,
-    awaiting: true,
-    timestamp: Date.now()
-  });
+    console.log('🔍 Sending complete page selection card...');
+    await sendInteractiveCard(chatId, pageSelectionCard);
+    
+    userInteractionState.set(chatId, {
+      step: 'awaiting_page_selection',
+      selectedPage: null,
+      awaiting: true,
+      timestamp: Date.now()
+    });
+    
+  } catch (cardError) {
+    console.error('❌ Card sending failed, sending text fallback:', cardError);
+    
+    // Send a text message as fallback
+    const fallbackMessage = `👋 Welcome to PM-Next Support Bot! 🤖
+
+Please let me know which page you need help with:
+📊 Dashboard - overview and analytics  
+💼 Jobs - job posting and management
+👥 Candidates - candidate profiles and management
+🏢 Clients - client and company management
+📅 Calendar - interview scheduling and calendar management
+💰 Claims - billing and financial tracking
+
+Or ask me anything about PM-Next directly!`;
+
+    await sendMessageToLark(chatId, fallbackMessage);
+  }
 }
 
 // Send FAQ options for selected page
