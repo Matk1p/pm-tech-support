@@ -53,8 +53,6 @@ export async function withRetry(fn, maxRetries = 3, baseDelay = 1000) {
       // Exponential backoff with jitter
       const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
       await new Promise(resolve => setTimeout(resolve, delay));
-      
-      console.log(`🔄 Retry attempt ${attempt}/${maxRetries} after ${delay}ms`);
     }
   }
   

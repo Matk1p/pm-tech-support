@@ -75,7 +75,7 @@ RELAY_SERVICE_URL=https://your-relay-service.railway.app
 ✅ **No timeout limits** - Relay service can run indefinitely  
 ✅ **Better reliability** - Always-on service, not serverless  
 ✅ **Faster responses** - Immediate webhook acknowledgment  
-✅ **Full processing** - Complete AI + card interactions  
+✅ **Full processing** - Complete AI processing  
 ✅ **Cost effective** - Railway/Render free tiers available  
 
 ## 🔧 Alternative: Queue-Based Solution

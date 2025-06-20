@@ -2,169 +2,276 @@ import Head from 'next/head';
 import { useState, useEffect } from 'react';
 
 export default function Home() {
-  const [healthStatus, setHealthStatus] = useState(null);
+  const [health, setHealth] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check health status on load
-    fetch('/api/health')
-      .then(res => res.json())
-      .then(data => {
-        setHealthStatus(data);
+    const checkHealth = async () => {
+      try {
+        const response = await fetch('/api/lark/events');
+        const data = await response.json();
+        setHealth(data);
+      } catch (error) {
+        setHealth({ 
+          status: 'error', 
+          error: error.message,
+          timestamp: new Date().toISOString()
+        });
+      } finally {
         setLoading(false);
-      })
-      .catch(err => {
-        console.error('Health check failed:', err);
-        setLoading(false);
-      });
+      }
+    };
+
+    checkHealth();
   }, []);
 
   return (
     <>
       <Head>
-        <title>PM-Next Lark Bot - Next.js</title>
-        <meta name="description" content="PM-Next Recruitment Management System Lark Bot" />
+        <title>PM-Next Support Bot - Status Dashboard</title>
+        <meta name="description" content="AI-powered support bot for PM-Next platform" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      <div style={{
-        minHeight: '100vh',
-        padding: '20px',
+      <main style={{ 
         fontFamily: 'system-ui, -apple-system, sans-serif',
-        backgroundColor: '#f5f5f5'
+        lineHeight: 1.6,
+        maxWidth: '800px',
+        margin: '0 auto',
+        padding: '20px',
+        color: '#333'
       }}>
-        <main style={{
-          maxWidth: '800px',
-          margin: '0 auto',
-          backgroundColor: 'white',
-          padding: '40px',
-          borderRadius: '8px',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
+        <header style={{ 
+          textAlign: 'center', 
+          marginBottom: '40px',
+          borderBottom: '2px solid #eee',
+          paddingBottom: '20px'
         }}>
-          <h1 style={{
-            color: '#333',
-            textAlign: 'center',
-            marginBottom: '30px',
-            fontSize: '2.5em'
+          <h1 style={{ 
+            color: '#2563eb', 
+            fontSize: '2.5rem',
+            margin: '0 0 10px 0'
           }}>
-            🤖 PM-Next Lark Bot
+            🤖 PM-Next Support Bot
           </h1>
-          
-          <div style={{
-            textAlign: 'center',
-            marginBottom: '40px'
+          <p style={{ 
+            fontSize: '1.2rem', 
+            color: '#666',
+            margin: 0
           }}>
-            <p style={{ fontSize: '1.2em', color: '#666', marginBottom: '20px' }}>
-              Next.js-powered intelligent assistant for PM-Next Recruitment Management System
-            </p>
-          </div>
+            AI-Powered Support System for PM-Next Platform
+          </p>
+        </header>
 
+        <div style={{ 
+          display: 'grid', 
+          gap: '20px',
+          marginBottom: '30px'
+        }}>
+          {/* System Status */}
           <div style={{
-            backgroundColor: '#f8f9fa',
-            padding: '30px',
+            background: loading ? '#f8f9fa' : health?.status === 'ok' ? '#d4edda' : '#f8d7da',
+            border: `1px solid ${loading ? '#dee2e6' : health?.status === 'ok' ? '#c3e6cb' : '#f5c6cb'}`,
             borderRadius: '8px',
-            border: '1px solid #e9ecef'
+            padding: '20px'
           }}>
-            <h2 style={{ marginBottom: '20px', color: '#495057' }}>🔧 System Status</h2>
+            <h2 style={{ 
+              margin: '0 0 15px 0',
+              color: loading ? '#6c757d' : health?.status === 'ok' ? '#155724' : '#721c24'
+            }}>
+              🔧 System Status
+            </h2>
             
             {loading ? (
-              <p>Loading system status...</p>
-            ) : healthStatus ? (
+              <p>⏳ Checking system status...</p>
+            ) : health?.status === 'ok' ? (
               <div>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  marginBottom: '15px'
-                }}>
-                  <span style={{
-                    display: 'inline-block',
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '50%',
-                    backgroundColor: healthStatus.status === 'healthy' ? '#28a745' : 
-                                    healthStatus.status === 'degraded' ? '#ffc107' : '#dc3545',
-                    marginRight: '10px'
-                  }}></span>
-                  <strong>Status: {healthStatus.status.toUpperCase()}</strong>
-                </div>
-                
-                <div style={{ fontSize: '0.9em', color: '#6c757d' }}>
-                  <p><strong>Environment:</strong> {healthStatus.environment}</p>
-                  <p><strong>Version:</strong> {healthStatus.version}</p>
-                  <p><strong>Uptime:</strong> {Math.round(healthStatus.uptime)} seconds</p>
-                  <p><strong>Last Check:</strong> {new Date(healthStatus.timestamp).toLocaleString()}</p>
-                </div>
-
-                {healthStatus.services && (
-                  <div style={{ marginTop: '20px' }}>
-                    <h4 style={{ marginBottom: '10px' }}>Services:</h4>
-                    <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                      <li>Lark SDK: <span style={{ color: healthStatus.services.lark === 'configured' ? '#28a745' : '#dc3545' }}>
-                        {healthStatus.services.lark}
-                      </span></li>
-                      <li>OpenAI: <span style={{ color: healthStatus.services.openai === 'configured' ? '#28a745' : '#dc3545' }}>
-                        {healthStatus.services.openai}
-                      </span></li>
-                      <li>Supabase: <span style={{ color: healthStatus.services.supabase === 'configured' ? '#28a745' : '#dc3545' }}>
-                        {healthStatus.services.supabase}
-                      </span></li>
-                    </ul>
-                  </div>
-                )}
-
-                {healthStatus.warnings && (
-                  <div style={{
-                    marginTop: '15px',
-                    padding: '10px',
-                    backgroundColor: '#fff3cd',
-                    border: '1px solid #ffeaa7',
-                    borderRadius: '4px',
-                    color: '#856404'
-                  }}>
-                    <strong>⚠️ Warning:</strong> {healthStatus.warnings}
-                  </div>
-                )}
+                <p style={{ margin: '5px 0' }}>
+                  <strong>✅ Status:</strong> System Online
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>🔗 Webhook:</strong> Active
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>⏰ Last Check:</strong> {new Date(health.timestamp).toLocaleString()}
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>🤖 Lark Client:</strong> {health.larkClient || 'Unknown'}
+                </p>
               </div>
             ) : (
-              <p style={{ color: '#dc3545' }}>❌ Unable to fetch system status</p>
+              <div>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>❌ Status:</strong> Error Detected
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>🔍 Error:</strong> {health?.error || 'Unknown error'}
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>⏰ Timestamp:</strong> {health?.timestamp ? new Date(health.timestamp).toLocaleString() : 'Unknown'}
+                </p>
+              </div>
             )}
           </div>
 
-          <div style={{
-            marginTop: '40px',
-            padding: '30px',
-            backgroundColor: '#e7f3ff',
-            borderRadius: '8px',
-            border: '1px solid #b3d9ff'
-          }}>
-            <h2 style={{ marginBottom: '20px', color: '#0056b3' }}>📚 Features</h2>
-            <ul style={{ marginLeft: '20px', lineHeight: '1.6' }}>
-              <li><strong>Intelligent AI Responses:</strong> Powered by OpenAI GPT models</li>
-              <li><strong>Interactive Cards:</strong> Rich UI elements for better user experience</li>
-              <li><strong>FAQ System:</strong> Quick answers for common questions</li>
-              <li><strong>Support Ticketing:</strong> Automatic escalation for complex issues</li>
-              <li><strong>Knowledge Base:</strong> Dynamic learning from support interactions</li>
-              <li><strong>Multi-Page Support:</strong> Dashboard, Jobs, Candidates, Clients, Calendar, Claims</li>
-            </ul>
-          </div>
+          {/* Environment Check */}
+          {health?.environmentCheck && (
+            <div style={{
+              background: '#e7f3ff',
+              border: '1px solid #b8daff',
+              borderRadius: '8px',
+              padding: '20px'
+            }}>
+              <h2 style={{ margin: '0 0 15px 0', color: '#004085' }}>
+                🔐 Environment Configuration
+              </h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>Lark App ID:</strong> {health.environmentCheck.hasLarkAppId ? '✅' : '❌'}
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>Lark Secret:</strong> {health.environmentCheck.hasLarkAppSecret ? '✅' : '❌'}
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>OpenAI Key:</strong> {health.environmentCheck.hasOpenAIKey ? '✅' : '❌'}
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>Supabase URL:</strong> {health.environmentCheck.hasSupabaseUrl ? '✅' : '❌'}
+                </p>
+                <p style={{ margin: '5px 0' }}>
+                  <strong>Supabase Key:</strong> {health.environmentCheck.hasSupabaseKey ? '✅' : '❌'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
-          <div style={{
-            marginTop: '30px',
-            textAlign: 'center',
-            padding: '20px',
-            backgroundColor: '#f8f9fa',
-            borderRadius: '8px'
+        {/* Features Section */}
+        <section style={{
+          background: '#f8f9fa',
+          border: '1px solid #dee2e6',
+          borderRadius: '8px',
+          padding: '20px',
+          marginBottom: '30px'
+        }}>
+          <h2 style={{ margin: '0 0 20px 0', color: '#495057' }}>
+            🌟 Bot Features
+          </h2>
+          <ul style={{ 
+            listStyle: 'none', 
+            padding: 0,
+            margin: 0,
+            display: 'grid',
+            gap: '10px'
           }}>
-            <h3 style={{ marginBottom: '15px' }}>🚀 API Endpoints</h3>
-            <div style={{ fontSize: '0.9em', color: '#6c757d' }}>
-              <p><code>/api/lark/events</code> - Webhook for Lark messages and interactions</p>
-              <p><code>/api/health</code> - System health check</p>
-              <p><code>/webhook</code> - Alias for Lark webhook (redirects to /api/lark/events)</p>
+            <li><strong>AI-Powered Support:</strong> Intelligent responses using OpenAI GPT models</li>
+            <li><strong>FAQ System:</strong> Pre-built answers for common PM-Next questions</li>
+            <li><strong>Support Tickets:</strong> Automatic escalation for complex issues</li>
+            <li><strong>Knowledge Base:</strong> Comprehensive PM-Next platform guidance</li>
+            <li><strong>Real-time Processing:</strong> Immediate responses with background processing</li>
+          </ul>
+        </section>
+
+        {/* API Endpoints */}
+                 <section style={{
+           background: '#fff3cd',
+           border: '1px solid #ffeaa7',
+           borderRadius: '8px',
+           padding: '20px',
+           marginBottom: '30px'
+         }}>
+          <h2 style={{ margin: '0 0 20px 0', color: '#856404' }}>
+            🔗 API Endpoints
+          </h2>
+          <div style={{ display: 'grid', gap: '15px' }}>
+            <div>
+              <h3 style={{ margin: '0 0 5px 0', color: '#856404' }}>Webhook Handler</h3>
+              <code style={{
+                background: '#f8f9fa',
+                padding: '8px 12px',
+                borderRadius: '4px',
+                display: 'block',
+                fontSize: '14px'
+              }}>
+                POST /api/lark/events
+              </code>
+              <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#666' }}>
+                Handles all Lark webhook events and bot interactions
+              </p>
+            </div>
+            
+            <div>
+              <h3 style={{ margin: '0 0 5px 0', color: '#856404' }}>Health Check</h3>
+              <code style={{
+                background: '#f8f9fa',
+                padding: '8px 12px',
+                borderRadius: '4px',
+                display: 'block',
+                fontSize: '14px'
+              }}>
+                GET /api/lark/events
+              </code>
+              <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#666' }}>
+                Returns system status and configuration validation
+              </p>
             </div>
           </div>
-        </main>
-      </div>
+        </section>
+
+        {/* PM-Next Modules */}
+        <section style={{
+          background: '#d1ecf1',
+          border: '1px solid #bee5eb',
+          borderRadius: '8px',
+          padding: '20px'
+        }}>
+          <h2 style={{ margin: '0 0 20px 0', color: '#0c5460' }}>
+            📚 Supported PM-Next Modules
+          </h2>
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '15px'
+          }}>
+            <div>
+              <h3 style={{ margin: '0 0 5px 0', color: '#0c5460' }}>📊 Dashboard</h3>
+              <p style={{ margin: 0, fontSize: '14px' }}>Overview, analytics, and KPIs</p>
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 5px 0', color: '#0c5460' }}>💼 Jobs</h3>
+              <p style={{ margin: 0, fontSize: '14px' }}>Job posting and management</p>
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 5px 0', color: '#0c5460' }}>👥 Candidates</h3>
+              <p style={{ margin: 0, fontSize: '14px' }}>Candidate profiles and tracking</p>
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 5px 0', color: '#0c5460' }}>🏢 Clients</h3>
+              <p style={{ margin: 0, fontSize: '14px' }}>Client relationship management</p>
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 5px 0', color: '#0c5460' }}>📅 Calendar</h3>
+              <p style={{ margin: 0, fontSize: '14px' }}>Interview scheduling</p>
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 5px 0', color: '#0c5460' }}>💰 Claims</h3>
+              <p style={{ margin: 0, fontSize: '14px' }}>Billing and financial tracking</p>
+            </div>
+          </div>
+        </section>
+
+        <footer style={{ 
+          textAlign: 'center', 
+          marginTop: '40px',
+          paddingTop: '20px',
+          borderTop: '1px solid #eee',
+          color: '#666',
+          fontSize: '14px'
+        }}>
+          <p>Built with Next.js and powered by OpenAI • PM-Next Support Bot v2.0</p>
+        </footer>
+      </main>
     </>
   );
 } 
