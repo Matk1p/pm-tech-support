@@ -161,9 +161,20 @@ Common workflows:
 Always provide specific, actionable steps when helping users.`;
 
 export default async function handler(req, res) {
-  // Only handle POST requests
+  // Handle GET requests (for health checks and verification)
+  if (req.method === 'GET') {
+    return res.status(200).json({ 
+      status: 'ok',
+      message: 'Lark webhook endpoint is active',
+      timestamp: new Date().toISOString(),
+      endpoint: '/api/lark/events',
+      methods: ['GET', 'POST']
+    });
+  }
+
+  // Only handle POST requests for actual webhook events
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: 'Method not allowed. Use GET for health check or POST for webhook events.' });
   }
 
   try {
